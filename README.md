@@ -63,7 +63,7 @@ Rohwert-Stream für den **Seriellen Plotter** ein/aus, `t` sendet einen Test-Sch
 ## 3. Software installieren (Ubuntu)
 
 ```bash
-git clone https://github.com/olizeii/boxautomat.git ~/boxautomat
+git clone https://github.com/olizeii/cockautomat.git ~/boxautomat
 cd ~/boxautomat
 ./install.sh               # oder ./install.sh --autostart
 ```
