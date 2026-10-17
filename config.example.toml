@@ -1,0 +1,34 @@
+# Boxautomat – Einstellungen
+# Kopie davon heißt config.toml (macht install.sh automatisch).
+# Alles, was hier fehlt, nimmt den Standardwert.
+
+[display]
+display_index = 1        # 0 = Laptop-Bildschirm, 1 = Zweitbildschirm
+mode = "fullscreen"      # "fullscreen" | "borderless" | "windowed"
+width = 0                # 0 = native Auflösung des Bildschirms
+height = 0
+fps = 60
+hide_mouse = true
+
+[serial]
+port = "auto"            # oder fest, z.B. "/dev/ttyUSB0"
+baudrate = 115200        # muss zum Arduino-Sketch passen
+reconnect_interval = 2.0
+
+[game]
+count_up_time = 1.2      # Sekunden Hochzähl-Animation
+result_hold_time = 5.0   # Sekunden, die das Ergebnis angezeigt wird
+result_background = "frozen"   # "frozen" = gedimmtes Standbild, "black" = schwarz
+min_score = 1
+max_score = 999
+play_ready_overlay = true      # "Ready Fight"-Overlay, wenn es zurück in den Loop geht
+highscore_count = 10
+
+[assets]
+idle_video = "videos/idle_loop.mp4"
+ready_overlay_video = "videos/ready_overlay.mp4"
+overlay_chroma_tolerance = 40  # wie dunkel ein Pixel sein muss, um durchsichtig zu werden
+font_digital = "fonts/dseg7-classic-latin-400-normal.ttf"
+font_arcade = "fonts/ARCADECLASSIC.TTF"
+
+# highscore_file = "data/highscore.json"

@@ -1,0 +1,4 @@
+pygame>=2.5
+pyserial>=3.5
+opencv-python-headless>=4.8
+numpy>=1.24
