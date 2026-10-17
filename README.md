@@ -23,6 +23,7 @@ eine Arcade-Oberfläche in Python/pygame:
 
 ```
 arduino/boxautomat_sensor/   Arduino-Sketch (Schlagerkennung, Schalter)
+arduino/boxautomat_simple/   einfache Alternative mit MPU6050-Bibliothek (nur Schlag, kein Schalter)
 boxautomat/                  Python-App
   app.py                     Fenster, Hauptschleife, Tastatur
   game.py                    Zustandsautomat IDLE → COUNTING → RESULT → IDLE (+ SCOREBOARD)
