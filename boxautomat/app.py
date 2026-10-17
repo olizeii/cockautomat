@@ -79,7 +79,7 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
     import pygame
 
     from .serial_link import NullLink, SerialLink
-    from .ui import Renderer
+    from .ui import BG, Renderer
     from .video import OverlayPlayer, VideoPlayer
 
     pygame.font.init()      # kein pygame.init(): Audio wird nicht gebraucht
@@ -90,9 +90,11 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
     highscores = Highscores(cfg.highscore_file, cfg.game.highscore_count)
     game = Game(cfg.game, highscores)
     a = cfg.assets
-    video = VideoPlayer(a.path(a.idle_video), size)
-    overlay = OverlayPlayer(a.path(a.ready_overlay_video), size, a.overlay_chroma_tolerance)
-    renderer = Renderer(size, a.path(a.font_digital), a.path(a.font_arcade), cfg.game.max_score)
+    fit = cfg.display.video_fit
+    video = VideoPlayer(a.path(a.idle_video), size, fit)
+    overlay = OverlayPlayer(a.path(a.ready_overlay_video), size, a.overlay_chroma_tolerance, fit)
+    renderer = Renderer(size, a.path(a.font_digital), a.path(a.font_arcade), cfg.game.max_score,
+                        crt=cfg.display.crt_effect)
 
     link = (SerialLink(cfg.serial.port, cfg.serial.baudrate, cfg.serial.reconnect_interval)
             if use_serial else NullLink())
@@ -145,6 +147,9 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
                     video.paused = True
                     overlay.finished = True
                     if prev_state == State.IDLE:   # bei Schlag während Ergebnis: Standbild behalten
+                        # nur das Videobild einfrieren, ohne HUD-Texte
+                        screen.fill(BG)
+                        video.draw(screen)
                         renderer.freeze(screen, cfg.game.result_background == "black")
                 elif game.state == State.IDLE:
                     video.paused = False
@@ -158,14 +163,19 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
             if game.state == State.IDLE:
                 video.update(dt)
                 overlay.update(dt)
+                if fit == "contain":
+                    screen.fill(BG)
                 video.draw(screen)
                 overlay.draw(screen)
-                renderer.draw_idle_hud(screen, highscores, connected or not use_serial, now)
+                renderer.draw_idle_hud(screen, video.rect, highscores,
+                                       connected or not use_serial, now)
             elif game.state in (State.COUNTING, State.RESULT):
-                renderer.draw_result(screen, game, now)
+                renderer.draw_result(screen, game, highscores.best, now)
             else:
-                renderer.draw_scoreboard(screen, highscores)
+                renderer.draw_scoreboard(screen, highscores, now, game.state_since,
+                                         highlight=game.rank if game.score else None)
 
+            renderer.post(screen)
             pygame.display.flip()
             frame += 1
             if max_frames is not None and frame >= max_frames:

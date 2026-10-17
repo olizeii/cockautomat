@@ -9,6 +9,8 @@ width = 0                # 0 = native Auflösung des Bildschirms
 height = 0
 fps = 60
 hide_mouse = true
+video_fit = "contain"    # "contain" = ganzes Video sichtbar, "cover" = füllt den Bildschirm (schneidet ab)
+crt_effect = true        # Röhrenmonitor-Look (Scanlines, dunkle Ecken)
 
 [serial]
 port = "auto"            # oder fest, z.B. "/dev/ttyUSB0"

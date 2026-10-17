@@ -20,6 +20,8 @@ class DisplayConfig:
     height: int = 0
     fps: int = 60
     hide_mouse: bool = True
+    video_fit: str = "contain"      # "contain" = ganzes Video sichtbar | "cover" = Bildschirm füllen
+    crt_effect: bool = True         # Scanlines + abgedunkelte Ecken
 
 
 @dataclass

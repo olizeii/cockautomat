@@ -4,10 +4,13 @@ Ein selbstgebauter Boxautomat: Ein **Arduino Nano** misst mit einem **MPU-6050**
 die Schlagkraft und schickt sie per USB an einen **Ubuntu-Laptop**. Dort läuft auf dem **Zweitbildschirm**
 eine Arcade-Oberfläche in Python/pygame:
 
-- **Idle:** Hintergrundvideo in Endlosschleife (+ Highscore-Anzeige)
-- **Schlag:** Video stoppt, die Punktzahl zählt in großer 7-Segment-Optik hoch, mit Kraftbalken, „NEUER REKORD“ bzw. „PLATZ x“
+- **Idle:** Pixel-Art-Boxvideo in Endlosschleife, unten eine Leiste mit Highscore und blinkendem „HAU DRAUF“
+- **Schlag:** Blitz und Funkenregen, die Punktzahl zählt in einer leuchtenden 7-Segment-Anzeige hoch, darunter
+  ein LED-Kraftbalken mit Rekordmarke. Danach eine Bewertung („GANZ NETT“ … „KNOCKOUT“) und „NEUER REKORD“
+  mit Konfetti bzw. „PLATZ x“
 - **Danach:** zurück in den Loop, mit „Ready Fight“-Overlay
-- **Scoreboard-Schalter:** zeigt die Top 10
+- **Scoreboard-Schalter:** Top 10 im Synthwave-Look, der letzte Schlag ist markiert
+- Über allem liegt ein Röhrenmonitor-Effekt (Scanlines, dunkle Ecken), abschaltbar mit `crt_effect = false`
 
 ```
 ┌──────────────┐  USB (115200 Baud)  ┌──────────────────────────────┐   HDMI   ┌───────────────┐
@@ -96,6 +99,8 @@ Das Log liegt in `logs/boxautomat.log`.
 
 **Bildschirm:** In `config.toml` unter `[display]` die Option `display_index` setzen (0 = Laptop, 1 = Zweitbildschirm).
 Wenn Vollbild auf deinem Desktop Probleme macht, nimm `mode = "borderless"`. devilspie2 wird nicht mehr gebraucht.
+`video_fit = "contain"` zeigt das ganze Video (bei 5:4-Monitoren mit Rand oben und unten, dort stehen Titel und
+Highscore). `video_fit = "cover"` füllt den Bildschirm und schneidet dafür links und rechts ab.
 
 **Schlagkraft:** Die Punkte rechnet der Arduino aus. Die Werte stehen oben im Sketch:
 
@@ -116,7 +121,7 @@ Schlagfläche sitzen, z. B. am Arm statt direkt am Polster.
 
 | Problem | Lösung |
 |---|---|
-| „NO SENSOR“ blinkt oben links | USB-Kabel prüfen, `ls /dev/ttyUSB* /dev/ttyACM*`, Gruppe `dialout`, brltty entfernen |
+| „NO SENSOR“ blinkt unten rechts | USB-Kabel prüfen, `ls /dev/ttyUSB* /dev/ttyACM*`, Gruppe `dialout`, brltty entfernen |
 | `ERR MPU6050 nicht gefunden` im Log | SDA/SCL vertauscht? 5V/GND? Bei AD0 = HIGH im Sketch `MPU_ADDR = 0x69` setzen |
 | Fenster auf falschem Bildschirm | `display_index` in `config.toml` ändern |
 | Video ruckelt | `fps = 30` setzen oder das Video auf Bildschirmauflösung herunterrechnen |

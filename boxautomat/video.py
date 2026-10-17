@@ -15,18 +15,22 @@ import pygame
 log = logging.getLogger(__name__)
 
 
-def _cover_size(src: tuple[int, int], dst: tuple[int, int]) -> tuple[int, int]:
-    """Skaliert so, dass das Video den Bildschirm komplett füllt (Ränder werden abgeschnitten)."""
+def _fit_size(src: tuple[int, int], dst: tuple[int, int], fit: str) -> tuple[int, int]:
+    """cover: füllt den Bildschirm (Ränder werden abgeschnitten).
+    contain: ganzes Video sichtbar, Rest bleibt Hintergrund."""
     sw, sh = src
     dw, dh = dst
-    scale = max(dw / sw, dh / sh)
+    pick = min if fit == "contain" else max
+    scale = pick(dw / sw, dh / sh)
     return max(1, round(sw * scale)), max(1, round(sh * scale))
 
 
 class _BasePlayer:
-    def __init__(self, path: Path, target_size: tuple[int, int], loop: bool):
+    def __init__(self, path: Path, target_size: tuple[int, int], loop: bool, fit: str = "cover"):
         self.path = Path(path)
         self.target_size = target_size
+        self.fit = fit
+        self.offset = (0, 0)    # Position des Bildes bei fit = "contain"
         self.loop = loop
         self.cap: cv2.VideoCapture | None = None
         self.fps = 30.0
@@ -86,20 +90,30 @@ class _BasePlayer:
 
     def _resize(self, img: np.ndarray) -> np.ndarray:
         h, w = img.shape[:2]
-        nw, nh = _cover_size((w, h), self.target_size)
+        nw, nh = _fit_size((w, h), self.target_size, self.fit)
         if (nw, nh) != (w, h):
             img = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        # mittig auf Zielgröße zuschneiden
         tw, th = self.target_size
+        if self.fit == "contain":
+            self.offset = ((tw - nw) // 2, (th - nh) // 2)
+            return img
+        # mittig auf Zielgröße zuschneiden
         x0, y0 = (nw - tw) // 2, (nh - th) // 2
         return img[y0:y0 + th, x0:x0 + tw]
+
+    @property
+    def rect(self) -> tuple[int, int, int, int]:
+        """Bereich, den das Video auf dem Bildschirm einnimmt (x, y, w, h)."""
+        if self.frame is None:
+            return (0, 0, *self.target_size)
+        return (*self.offset, *self.frame.get_size())
 
     def _to_surface(self, img: np.ndarray) -> pygame.Surface:
         raise NotImplementedError
 
     def draw(self, screen: pygame.Surface) -> None:
         if self.frame is not None:
-            screen.blit(self.frame, (0, 0))
+            screen.blit(self.frame, self.offset)
 
     def close(self) -> None:
         if self.cap:
@@ -108,8 +122,8 @@ class _BasePlayer:
 
 
 class VideoPlayer(_BasePlayer):
-    def __init__(self, path: Path, target_size: tuple[int, int]):
-        super().__init__(path, target_size, loop=True)
+    def __init__(self, path: Path, target_size: tuple[int, int], fit: str = "cover"):
+        super().__init__(path, target_size, loop=True, fit=fit)
         self.update(1 / self.fps)  # erstes Bild sofort laden
 
     def _to_surface(self, img: np.ndarray) -> pygame.Surface:
@@ -119,8 +133,9 @@ class VideoPlayer(_BasePlayer):
 
 
 class OverlayPlayer(_BasePlayer):
-    def __init__(self, path: Path, target_size: tuple[int, int], tolerance: int = 40):
-        super().__init__(path, target_size, loop=False)
+    def __init__(self, path: Path, target_size: tuple[int, int], tolerance: int = 40,
+                 fit: str = "cover"):
+        super().__init__(path, target_size, loop=False, fit=fit)
         self.tolerance = tolerance
         self.finished = True   # spielt erst nach start()
 
