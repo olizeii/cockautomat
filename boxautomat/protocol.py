@@ -8,6 +8,7 @@ from dataclasses import dataclass
 class Hit:
     score: int
     peak_mg: int | None = None
+    clipped: bool = False       # Sensor war am Anschlag (±16 g) – Wert zu niedrig
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,95 @@ class Connection:
     port: str | None = None
 
 
-Event = Hit | SwitchState | DeviceReady | DeviceMessage | Connection
+@dataclass(frozen=True)
+class SensorConfig:
+    """Aktive Schwelle / 999-Wert der Firmware (aus EEPROM oder Standard)."""
+    trigger_mg: int
+    max_mg: int
+    source: str             # "eeprom" | "default"
+
+
+# -- Kalibrierung (Zeilen "CAL ...") ----------------------------------------------
+@dataclass(frozen=True)
+class CalBegin:
+    reason: str             # "first" | "switch" | "command"
+
+
+@dataclass(frozen=True)
+class CalState:
+    step: str               # "REST" | "LIGHT" | "HARD"
+    done: int
+    need: int
+
+
+@dataclass(frozen=True)
+class CalRest:
+    noise_mg: int
+
+
+@dataclass(frozen=True)
+class CalHit:
+    step: str
+    index: int
+    peak_mg: int
+    clipped: bool
+
+
+@dataclass(frozen=True)
+class CalReject:
+    reason: str             # "MOVING" | "WEAK"
+
+
+@dataclass(frozen=True)
+class CalLive:
+    mg: int
+
+
+@dataclass(frozen=True)
+class CalInfo:
+    rate_hz: int
+    temp_dc: int            # 1/10 °C
+    base_mg: tuple[int, int, int]
+
+
+@dataclass(frozen=True)
+class CalDone:
+    trigger_mg: int
+    max_mg: int
+    clips: int
+
+
+@dataclass(frozen=True)
+class CalAbort:
+    pass
+
+
+CalEvent = (CalBegin | CalState | CalRest | CalHit | CalReject | CalLive | CalInfo | CalDone
+            | CalAbort)
+Event = Hit | SwitchState | DeviceReady | DeviceMessage | Connection | SensorConfig | CalEvent
+
+
+def _parse_cal(rest: str) -> CalEvent | None:
+    kind, *a = rest.split()
+    if kind == "BEGIN":
+        return CalBegin(a[0] if a else "?")
+    if kind == "STATE" and a[0] in ("REST", "LIGHT", "HARD"):
+        return CalState(a[0], int(a[1]), int(a[2]))
+    if kind == "REST":
+        return CalRest(int(a[0]))
+    if kind == "HIT" and a[0] in ("LIGHT", "HARD"):
+        return CalHit(a[0], int(a[1]), int(a[2]), len(a) > 3 and a[3] == "1")
+    if kind == "REJECT":
+        return CalReject(a[0])
+    if kind == "LIVE":
+        return CalLive(int(a[0]))
+    if kind == "INFO":
+        return CalInfo(int(a[0]), int(a[1]), (int(a[2]), int(a[3]), int(a[4])))
+    if kind == "DONE":
+        return CalDone(int(a[0]), int(a[1]), int(a[2]))
+    if kind == "ABORT":
+        return CalAbort()
+    return None
 
 
 def parse_line(line: str) -> Event | None:
@@ -58,7 +147,18 @@ def parse_line(line: str) -> Event | None:
             peak = int(parts[1]) if len(parts) > 1 else None
         except (IndexError, ValueError):
             return None
-        return Hit(score, peak)
+        return Hit(score, peak, len(parts) > 2 and parts[2] == "1")
+    if head == "CFG":
+        parts = rest.split()
+        try:
+            return SensorConfig(int(parts[0]), int(parts[1]), parts[2] if len(parts) > 2 else "?")
+        except (IndexError, ValueError):
+            return None
+    if head == "CAL":
+        try:
+            return _parse_cal(rest)
+        except (IndexError, ValueError):
+            return None
     if head == "READY":
         return DeviceReady(rest.strip() or "?")
     if head in ("INFO", "ERR"):

@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pygame
 
+from .calibration import ABORT_SECONDS, CLIP_MG, DONE_SECONDS, LIVE_SECONDS, Calibration
 from .game import Game, State
 from .highscores import Highscores
 
@@ -48,6 +49,18 @@ RATINGS = (
     (0.20, "GANZ NETT", ICE),
     (0.00, "STREICHELEINHEIT", ICE),
 )
+
+
+# Kalibrier-Bildschirm
+CAL_STEPS = (("REST", "RUHE"), ("LIGHT", "LEICHT"), ("HARD", "HART"))
+CAL_REASONS = {"first": "ERSTE EINRICHTUNG", "switch": "PER SCHALTER", "command": "PER TASTE"}
+CAL_REJECTS = {"MOVING": "BEWEGUNG ERKANNT  SACK RUHIG HALTEN",
+               "WEAK": "ZU SCHWACH  FESTER ZUSCHLAGEN"}
+GRID_G = (0.5, 1, 2, 4, 8, 16)
+
+
+def _g(mg: int) -> str:
+    return f"{mg / 1000:.2f}"
 
 
 def _font(path: Path, size: int, fallback: str = "dejavusans", bold: bool = True) -> pygame.font.Font:
@@ -90,6 +103,7 @@ class Renderer:
         self.f_tiny = _font(font_arcade, int(2.8 * u))
         self.f_seg = _font(font_digital, int(4.4 * u))
         self.f_seg_small = _font(font_digital, int(3.2 * u))
+        self.f_seg_tiny = _font(font_digital, int(2.2 * u))
         self._arcade = {id(f) for f in (self.f_title, self.f_big, self.f_mid, self.f_small,
                                         self.f_tiny)}
 
@@ -566,3 +580,238 @@ class Renderer:
                 pygame.draw.polygon(screen, WHITE, [(ax, y - s), (ax + s, y), (ax, y + s)])
                 bx = panel.right - 2.2 * u + dx - math.sin(now * 8) * 0.6 * u
                 pygame.draw.polygon(screen, WHITE, [(bx, y - s), (bx - s, y), (bx, y + s)])
+
+    # -- Kalibrierung ----------------------------------------------------------
+    def _num(self, screen, value: str, unit: str, x, y, color, anchor: str = "midright",
+             font=None, max_w: float | None = None):
+        """Zahl in 7-Segment (kann Punkt und Minus) + Einheit in Arcade-Schrift."""
+        num = self.text(font or self.f_seg_small, value, color, aa=True)
+        if max_w and num.get_width() > max_w:       # zu lang -> schmaler drücken
+            num = pygame.transform.smoothscale(num, (int(max_w), num.get_height()))
+        unit_s = self.text(self.f_tiny, unit, color) if unit else None
+        gap = int(self.u * 0.7)
+        box = pygame.Rect(0, 0, num.get_width() + (gap + unit_s.get_width() if unit_s else 0),
+                          num.get_height())
+        setattr(box, anchor, (int(x), int(y)))
+        screen.blit(num, box.topleft)
+        if unit_s:
+            screen.blit(unit_s, unit_s.get_rect(midleft=(box.left + num.get_width() + gap,
+                                                         box.centery)))
+        return box
+
+    def _dashed(self, screen, color, y, x0, x1, width: int) -> None:
+        dash = max(4, int(self.u * 1.2))
+        for x in range(int(x0), int(x1), dash * 2):
+            pygame.draw.line(screen, color, (x, y), (min(x + dash, x1), y), width)
+
+    def _dashed_v(self, screen, color, x, y0, y1) -> None:
+        dash = max(3, int(self.u * 0.8))
+        for y in range(int(y0), int(y1), dash * 2):
+            pygame.draw.line(screen, color, (x, y), (x, min(y + dash, y1)), 1)
+
+    def draw_calibration(self, screen, cal: Calibration, now: float, port: str | None = None) -> None:
+        u, w = self.u, self.w
+        screen.fill(BG)
+        title = self.text(self.f_big, "SENSOR KALIBRIERUNG", gradient=FIRE, outline=self._ol(self.f_big))
+        self._put(screen, title, w / 2, 6 * u)
+        if cal.reason in CAL_REASONS:
+            self._put(screen, self.text(self.f_tiny, CAL_REASONS[cal.reason], GREY),
+                      w - 3 * u, 2 * u, "topright")
+
+        finished = not cal.active
+        order = [k for k, _ in CAL_STEPS]
+        if finished and not cal.aborted:
+            cur = 3
+        else:
+            cur = order.index(cal.step) if cal.step in order else 0
+
+        # Schritt-Leiste
+        pill_w, gap = min(30 * u, w * 0.27), 3 * u
+        x0 = w / 2 - (3 * pill_w + 2 * gap) / 2
+        for i, (key, label) in enumerate(CAL_STEPS):
+            rect = pygame.Rect(int(x0 + i * (pill_w + gap)), int(12 * u), int(pill_w), int(5 * u))
+            text = f"{i + 1} {label}"
+            if i < cur:
+                fill, border, col = (8, 40, 20), GREEN, GREEN
+                text += "  OK"
+            elif i == cur and not finished:
+                fill, col = (6, 30, 40), WHITE
+                border = CYAN if int(now * 2) % 2 == 0 else (0, 110, 140)
+                if key != "REST":
+                    text += f"  {cal.done} VON {cal.need}"
+            else:
+                fill, border, col = (14, 14, 28), (60, 60, 80), GREY
+            pygame.draw.rect(screen, fill, rect, border_radius=int(u))
+            pygame.draw.rect(screen, border, rect, width=max(2, int(0.3 * u)), border_radius=int(u))
+            self._put(screen, self.text(self.f_tiny, text, col), rect.centerx, rect.centery)
+
+        # Anweisung
+        if finished and cal.aborted:
+            big, grad, sub = "ABGEBROCHEN", FIRE, "ALTE WERTE BLEIBEN AKTIV"
+        elif finished:
+            big, grad, sub = "FERTIG", TOXIC, "WERTE SIND IM ARDUINO GESPEICHERT"
+        elif cal.step == "REST":
+            big, grad, sub = "NICHT BERUEHREN", ICE, "RUHELAGE UND RAUSCHEN WERDEN GEMESSEN"
+        elif cal.step == "LIGHT":
+            big, grad, sub = "LEICHT KLOPFEN", TOXIC, f"{cal.need}X SANFT ABER ECHT ANTIPPEN"
+        else:
+            big, grad, sub = "VOLL DRAUF", FIRE, f"{cal.need}X SO HART WIE MOEGLICH"
+        instr = self.text(self.f_big, big, gradient=grad, outline=self._ol(self.f_big))
+        if not finished:
+            pulse = 1 + 0.04 * math.sin(now * 6)
+            instr = pygame.transform.scale(instr, (int(instr.get_width() * pulse),
+                                                   int(instr.get_height() * pulse)))
+        self._put(screen, instr, w / 2, 23 * u)
+        self._put(screen, self.text(self.f_small, sub, WHITE), w / 2, 30 * u)
+        if not finished and cal.step != "REST":
+            r = 1.1 * u
+            for i in range(cal.need):
+                cx = w / 2 + (i - (cal.need - 1) / 2) * 4 * u
+                if i < cal.done:
+                    pygame.draw.circle(screen, GREEN, (int(cx), int(34 * u)), int(r))
+                else:
+                    pygame.draw.circle(screen, GREY, (int(cx), int(34 * u)), int(r),
+                                       max(1, int(0.3 * u)))
+
+        top, height = 37 * u, 49 * u
+        self._draw_scope(screen, cal, now,
+                         pygame.Rect(int(3 * u), int(top), int(w * 0.6), int(height)))
+        left = 3 * u + w * 0.6 + 2 * u
+        self._draw_cal_values(screen, cal, port,
+                              pygame.Rect(int(left), int(top), int(w - 3 * u - left), int(height)))
+
+        # Hinweise unten: Übersteuerung > abgelehnter Schlag
+        msg, col = None, AMBER
+        if cal.clipped:
+            msg, col = "UEBERSTEUERT  SENSOR NAEHER ANS SCHARNIER SETZEN", RED
+        elif cal.near_limit:
+            msg = "AM MESSLIMIT  SENSOR NAEHER ANS SCHARNIER SETZEN"
+        elif cal.reject and now - cal.reject_at < 3 and not finished:
+            msg, col = CAL_REJECTS.get(cal.reject, cal.reject), RED
+        if msg and int(now * 2.5) % 3 != 2:
+            self._put(screen, self.text(self.f_small, msg, col, outline=2), w / 2, 90 * u)
+        if finished and cal.ended_at is not None:
+            left_s = (ABORT_SECONDS if cal.aborted else DONE_SECONDS) - (now - cal.ended_at)
+            footer = f"ZURUECK ZUM SPIEL IN {max(0, math.ceil(left_s))}"
+        else:
+            footer = "ABBRECHEN  SCHALTER 6X KIPPEN ODER TASTE K"
+        self._put(screen, self.text(self.f_tiny, footer, GREY), w / 2, 95.5 * u)
+
+    def _draw_scope(self, screen, cal: Calibration, now: float, panel: pygame.Rect) -> None:
+        """Oszilloskop: Beschleunigung der letzten Sekunden, Wurzel-Skala bis 16 g."""
+        u = self.u
+        lw = max(2, int(0.3 * u))
+        pygame.draw.rect(screen, (4, 14, 12), panel, border_radius=int(u))
+        pygame.draw.rect(screen, (0, 120, 100), panel, width=lw, border_radius=int(u))
+        self._put(screen, self.text(self.f_tiny, "LIVE KURVE IN G", CYAN),
+                  panel.left + 1.5 * u, panel.top + 1.2 * u, "topleft")
+        plot = pygame.Rect(panel.left + int(7 * u), panel.top + int(5.5 * u),
+                           panel.width - int(9 * u), panel.height - int(7.5 * u))
+        top_mg = CLIP_MG * 1.05
+
+        def gy(mg: float) -> float:
+            return plot.bottom - plot.height * math.sqrt(min(max(mg, 0), top_mg) / top_mg)
+
+        def gx(t: float) -> float:
+            return plot.right - (now - t) / LIVE_SECONDS * plot.width
+
+        for g in GRID_G:
+            y = gy(g * 1000)
+            pygame.draw.line(screen, (0, 46, 36), (plot.left, y), (plot.right, y), 1)
+            self._put(screen, self.text(self.f_seg_tiny, f"{g:g}", (0, 150, 110), aa=True),
+                      plot.left - 1.2 * u, y, "midright")
+
+        # Grenzen: Messlimit, Schwellen
+        y = gy(CLIP_MG)
+        pygame.draw.line(screen, RED, (plot.left, y), (plot.right, y), lw)
+        self._put(screen, self.text(self.f_tiny, "CLIP", RED), plot.left + u, y - 0.6 * u, "bottomleft")
+        if cal.result:
+            for mg, label, col, anchor, x in (
+                    (cal.result.trigger_mg, "SCHWELLE", GREEN, "bottomleft", plot.left + u),
+                    (cal.result.max_mg, "999 PUNKTE", AMBER, "topright", plot.right - u)):
+                y = gy(mg)
+                self._dashed(screen, col, y, plot.left, plot.right, lw)
+                self._put(screen, self.text(self.f_tiny, label, col), x,
+                          y + (0.6 * u if anchor == "topright" else -0.6 * u), anchor)
+        elif cal.active and cal.detect_mg:
+            y = gy(cal.detect_mg)
+            self._dashed(screen, AMBER, y, plot.left, plot.right, max(1, lw // 2))
+            self._put(screen, self.text(self.f_tiny, "AUSLOESER", AMBER), plot.left + u,
+                      y - 0.6 * u, "bottomleft")
+
+        pts = [(gx(t), gy(mg)) for t, mg in cal.live if now - t <= LIVE_SECONDS]
+        if len(pts) >= 2:
+            pygame.draw.lines(screen, (0, 90, 45), False, pts, max(3, int(0.9 * u)))
+            pygame.draw.lines(screen, (90, 255, 140), False, pts, max(1, int(0.3 * u)))
+        else:
+            self._put(screen, self.text(self.f_small, "WARTE AUF DATEN", GREY), plot.centerx,
+                      plot.centery)
+
+        for t, mg, step, clip in cal.marks:
+            x, y = gx(t), gy(mg)
+            if x < plot.left:
+                continue
+            col = RED if clip else CYAN if step == "LIGHT" else AMBER
+            self._dashed_v(screen, col, x, y, plot.bottom)
+            pygame.draw.polygon(screen, col, [(x - u, y - 1.6 * u), (x + u, y - 1.6 * u),
+                                              (x, y - 0.3 * u)])
+            self._put(screen, self.text(self.f_seg_tiny, f"{mg / 1000:.1f}", col, aa=True),
+                      x, y - 2 * u, "midbottom")
+
+    def _draw_cal_values(self, screen, cal: Calibration, port: str | None,
+                         panel: pygame.Rect) -> None:
+        """Alle Messwerte, die der Sensor liefert, als Tabelle."""
+        u = self.u
+        pygame.draw.rect(screen, (8, 8, 26), panel, border_radius=int(u))
+        pygame.draw.rect(screen, (0, 110, 140), panel, width=max(2, int(0.3 * u)),
+                         border_radius=int(u))
+        self._put(screen, self.text(self.f_tiny, "MESSWERTE", CYAN),
+                  panel.left + 1.5 * u, panel.top + 1.2 * u, "topleft")
+
+        def peaks(hits):
+            return "  ".join(f"{mg / 1000:.1f}" for mg, _ in hits) if hits else "--"
+
+        live = cal.live_mg
+        live_col = RED if live >= CLIP_MG * 0.95 else AMBER if live >= 8000 else GREEN
+        info = cal.info
+        old = cal.old_config or cal.config
+        if cal.result:
+            trig, mx, source = cal.result.trigger_mg, cal.result.max_mg, "NEU"
+        elif old:
+            trig, mx = old.trigger_mg, old.max_mg
+            source = {"eeprom": "EEPROM", "default": "STANDARD"}.get(old.source, "--")
+        else:
+            trig = mx = None
+            source = "--"
+        new_col = GREEN if cal.result else WHITE
+        rows = [
+            ("LIVE", _g(live), "G", live_col),
+            ("SPITZE 6S", _g(cal.window_peak_mg), "G", WHITE),
+            ("RAUSCHEN", _g(cal.noise_mg) if cal.noise_mg is not None else "--", "G", WHITE),
+            ("LEICHT", peaks(cal.light), "G", CYAN),
+            ("HART", peaks(cal.hard), "G", RED if cal.clipped else AMBER),
+            ("ABTASTRATE", str(info.rate_hz) if info else "--", "HZ", WHITE),
+            ("TEMPERATUR", f"{info.temp_dc / 10:.1f}" if info else "--", "C", WHITE),
+            ("LAGE XYZ", " ".join(f"{v / 1000:.2f}" for v in info.base_mg) if info else "--",
+             "G", WHITE),
+            ("SCHWELLE", _g(trig) if trig is not None else "--", "G", new_col),
+            ("999 BEI", _g(mx) if mx is not None else "--", "G", new_col),
+            ("QUELLE", None, source, new_col),
+            ("FIRMWARE", cal.firmware or "--", "", GREY),
+            ("PORT", None, (port or "--").split("/")[-1].upper(), GREY),
+        ]
+        first = panel.top + 5.5 * u
+        row_h = (panel.bottom - u - first) / len(rows)
+        for i, (label, value, unit, col) in enumerate(rows):
+            y = first + (i + 0.5) * row_h
+            lab = self._put(screen, self.text(self.f_tiny, label, GREY), panel.left + 1.5 * u, y,
+                            "midleft")
+            if value is None:
+                self._put(screen, self.text(self.f_tiny, unit, col), panel.right - 1.5 * u, y,
+                          "midright")
+            else:
+                font = self.f_seg_small if i == 0 else self.f_seg_tiny
+                max_w = panel.right - 1.5 * u - lab.right - 2 * u - 3 * u
+                self._num(screen, value, unit, panel.right - 1.5 * u, y, col, font=font,
+                          max_w=max_w)
+

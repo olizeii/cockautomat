@@ -9,10 +9,12 @@ import sys
 import time
 from logging.handlers import RotatingFileHandler
 
+from .calibration import Calibration, demo_events
 from .config import Config, load_config
 from .game import Game, State
 from .highscores import Highscores
-from .protocol import Connection, DeviceMessage, Hit, SwitchState
+from .protocol import (CalAbort, CalBegin, CalDone, CalHit, CalReject, CalRest, Connection,
+                       DeviceMessage, DeviceReady, Hit, SensorConfig, SwitchState)
 
 log = logging.getLogger("boxautomat")
 
@@ -74,8 +76,8 @@ def open_window(cfg: Config):
 
 
 def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
-        sim_hits: list[tuple[int, int]] | None = None) -> None:
-    """Startet die App. max_frames/sim_hits sind für automatische Tests."""
+        sim_hits: list[tuple[int, int]] | None = None, sim_calibration: bool = False) -> None:
+    """Startet die App. max_frames/sim_hits/sim_calibration sind für automatische Tests."""
     import pygame
 
     from .serial_link import NullLink, SerialLink
@@ -101,6 +103,8 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
     link.start()
     connected = False
     sim_hits = sorted(sim_hits or [])
+    cal = Calibration()
+    demo: list = demo_events(time.monotonic()) if sim_calibration else []
 
     frame = 0
     running = True
@@ -123,12 +127,37 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
                         game.on_hit((event.key - pygame.K_0) * 111, now)
                     elif event.key == pygame.K_TAB:        # Scoreboard umschalten
                         game.on_switch(not game.scoreboard_switch, now)
+                    elif event.key == pygame.K_k:          # Kalibrierung starten / abbrechen
+                        if use_serial:
+                            link.send("x" if cal.active else "k")
+                        elif cal.active:                   # ohne Arduino: Demo-Ablauf
+                            demo.clear()
+                            cal.apply(CalAbort(), now)
+                        else:
+                            demo = demo_events(now)
 
-            for ev in link.poll():
+            events = link.poll()
+            while demo and demo[0][0] <= now:
+                events.append(demo.pop(0)[1])
+            for ev in events:
+                if cal.apply(ev, now):
+                    if isinstance(ev, (CalBegin, CalRest, CalHit, CalReject, CalDone, CalAbort)):
+                        log.info("Kalibrierung: %s", ev)
+                    continue
                 if isinstance(ev, Hit):
+                    if cal.visible(now):       # Schlag beendet die Ergebnisanzeige
+                        cal.dismiss()
                     accepted = game.on_hit(ev.score, now)
                     log.info("Schlag: %d Punkte (Peak %s mg)%s", ev.score, ev.peak_mg,
                              "" if accepted else " – ignoriert")
+                    if ev.clipped:
+                        log.warning("Schlag übersteuert (16 g erreicht) – Sensor näher ans "
+                                    "Scharnier setzen oder neu kalibrieren")
+                elif isinstance(ev, SensorConfig):
+                    log.info("Sensor: Schwelle %.2f g, 999 Punkte bei %.2f g (%s)",
+                             ev.trigger_mg / 1000, ev.max_mg / 1000, ev.source)
+                elif isinstance(ev, DeviceReady):
+                    cal.firmware = ev.version
                 elif isinstance(ev, SwitchState):
                     game.on_switch(ev.on, now)
                 elif isinstance(ev, Connection):
@@ -160,7 +189,9 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
                 prev_state = game.state
 
             # ---- Zeichnen ----------------------------------------------------
-            if game.state == State.IDLE:
+            if cal.visible(now):
+                renderer.draw_calibration(screen, cal, now, link.connected_port)
+            elif game.state == State.IDLE:
                 video.update(dt)
                 overlay.update(dt)
                 if fit == "contain":

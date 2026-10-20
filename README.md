@@ -59,10 +59,14 @@ Tipps zur Montage:
 1. `arduino/boxautomat_sensor/boxautomat_sensor.ino` in der Arduino IDE öffnen
 2. Board **Arduino Nano**, Prozessor **ATmega328P** (bei Klonen meist **„Old Bootloader“**)
 3. Hochladen
-4. Serieller Monitor auf **115200 Baud**: Es sollte `READY 2.0` erscheinen. Bei einem Schlag kommt `H <punkte> <spitzenwert_mg>`.
+4. Serieller Monitor auf **115200 Baud**: Es sollte `READY 2.1` erscheinen. Bei einem Schlag kommt
+   `H <punkte> <spitzenwert_mg> <clip>`.
+5. Beim allerersten Start ist im EEPROM noch nichts gespeichert, deshalb beginnt sofort die
+   **Kalibrierung** (siehe Abschnitt 5). Am besten läuft dabei schon die App, sie führt durch die Schritte.
 
-Befehle im Seriellen Monitor: `?` zeigt die Einstellungen, `c` kalibriert neu, `r` schaltet den
-Rohwert-Stream für den **Seriellen Plotter** ein/aus, `t` sendet einen Test-Schlag.
+Befehle im Seriellen Monitor: `?` zeigt die Einstellungen, `c` misst die Ruhelage neu, `k` startet
+die Kalibrierung, `x` bricht sie ab, `r` schaltet den Rohwert-Stream für den **Seriellen Plotter**
+ein/aus, `t` sendet einen Test-Schlag.
 
 ## 3. Software installieren (Ubuntu)
 
@@ -92,6 +96,7 @@ Das Skript erledigt Folgendes:
 | `Leertaste` | Test-Schlag mit Zufallswert |
 | `1`–`9` | Test-Schlag mit 111 … 999 |
 | `Tab` | Scoreboard ein/aus |
+| `K` | Kalibrierung starten / abbrechen (mit `--no-serial`: Demo-Ablauf) |
 | `Esc` / `Q` | Beenden |
 
 Das Log liegt in `logs/boxautomat.log`.
@@ -103,20 +108,29 @@ Wenn Vollbild auf deinem Desktop Probleme macht, nimm `mode = "borderless"`. dev
 `video_fit = "contain"` zeigt das ganze Video (bei 5:4-Monitoren mit Rand oben und unten, dort stehen Titel und
 Highscore). `video_fit = "cover"` füllt den Bildschirm und schneidet dafür links und rechts ab.
 
-**Schlagkraft:** Die Punkte rechnet der Arduino aus. Die Werte stehen oben im Sketch:
+**Schlagkraft-Kalibrierung:** Wie viel g ein Schlag ergibt, hängt stark davon ab, wo der Sensor sitzt:
+Je weiter weg vom Drehpunkt (Scharnier / Drehwirbel), desto größer der Ausschlag. Deshalb misst der
+Arduino Schwelle und 999-Punkte-Wert selbst und speichert sie im EEPROM.
 
-| Konstante | Bedeutung |
-|---|---|
-| `TRIGGER_G` | ab dieser Beschleunigung zählt es als Schlag. Erhöhen, wenn schon Anstupsen auslöst |
-| `MAX_SCORE_G` | dieser Spitzenwert ergibt 999 Punkte. Erhöhen, wenn zu oft 999 kommt |
-| `SCORE_EXPONENT` | < 1 gibt schwachen Schlägen mehr Punkte, > 1 macht hohe Scores seltener |
-| `PEAK_WINDOW_MS` | wie lange nach dem Auslösen der Spitzenwert gesucht wird |
-| `DEADTIME_MS` | Sperrzeit, damit das Nachschwingen nicht als zweiter Schlag zählt |
+Kalibrierung starten:
+- automatisch beim ersten Start (EEPROM leer)
+- **Scoreboard-Schalter 6× schnell hin- und herkippen** (innerhalb von 4 Sekunden), genauso abbrechen
+- Taste `K` in der App oder `k` im Seriellen Monitor
 
-So gehst du vor: `--debug` starten, ein paar leichte und harte Schläge machen und im Log die
-`Peak … mg`-Werte ansehen. `MAX_SCORE_G` setzt du etwas über den härtesten realistischen Schlag.
-Der MPU-6050 misst maximal ±16 g. Liegt man darüber, sollte der Sensor weiter weg von der
-Schlagfläche sitzen, z. B. am Arm statt direkt am Polster.
+Ablauf (die App zeigt dabei Live-Kurve, alle Spitzenwerte, Rauschen, Abtastrate, Temperatur, Lage
+des Sensors sowie alte und neue Werte):
+1. **Ruhe:** etwa 3 Sekunden nicht berühren. Dabei werden Ruhelage und Rauschen gemessen.
+2. **3× leicht klopfen:** Die Schwelle wird 70 % des schwächsten Klopfers.
+3. **3× voll draufhauen:** 999 Punkte = Mittelwert + 30 % Reserve (höchstens 16 g). Ein harter Schlag,
+   der nicht mindestens 1,5× so stark ist wie der stärkste leichte, zählt nicht.
+
+Meldet die App **„UEBERSTEUERT“** oder **„AM MESSLIMIT“**, kommt der Sensor bei harten Schlägen an
+seine Grenze von ±16 g. Dann den Sensor näher an den Drehpunkt setzen und neu kalibrieren.
+Nach einer Neukalibrierung sind alte Highscores nicht mehr ganz vergleichbar.
+
+Weitere Konstanten oben im Sketch: `SCORE_EXPONENT` (< 1 gibt schwachen Schlägen mehr Punkte),
+`PEAK_WINDOW_MS` (wie lange nach dem Auslösen der Spitzenwert gesucht wird), `DEADTIME_MS`
+(Sperrzeit gegen Nachschwingen), `CAL_RESERVE`, `TOGGLE_COUNT` / `TOGGLE_WINDOW_MS`.
 
 ## 6. Fehlersuche
 
@@ -142,12 +156,14 @@ Die Tests prüfen das Protokoll, den Zustandsautomaten, die Highscores und die U
 
 | Richtung | Zeile | Bedeutung |
 |---|---|---|
-| Arduino → PC | `READY <version>` | gestartet & kalibriert |
-| | `H <score> <peak_mg>` | Schlag |
+| Arduino → PC | `READY <version>` | gestartet |
+| | `CFG <trigger_mg> <max_mg> <eeprom\|default>` | aktive Einstellung |
+| | `H <score> <peak_mg> <clip>` | Schlag (`clip` 1 = Sensor am Anschlag) |
+| | `CAL BEGIN/STATE/REST/HIT/REJECT/LIVE/INFO/DONE/ABORT …` | Kalibrierung (Details oben im Sketch) |
 | | `S1` / `S0` | Scoreboard-Schalter an/aus (wird alle 2 s wiederholt) |
 | | `ERR …` / `INFO …` | Meldungen (landen im Log) |
 | | `<zahl>` | altes Format: nur Score, wird weiterhin verstanden |
-| PC → Arduino | `?` `c` `r` `t` | siehe oben |
+| PC → Arduino | `?` `c` `k` `x` `r` `t` | siehe oben |
 
 ## Lizenzen
 

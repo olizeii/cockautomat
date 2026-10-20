@@ -18,3 +18,12 @@ def test_app_runs_headless(tmp_path):
     cfg.highscore_file = tmp_path / "hs.json"
     run(cfg, use_serial=False, max_frames=300, sim_hits=[(5, 640), (150, 120)])
     assert (tmp_path / "hs.json").exists()
+
+
+def test_app_runs_calibration_demo_headless(tmp_path):
+    cfg = Config()
+    cfg.display.mode = "windowed"
+    cfg.display.width, cfg.display.height = 640, 480
+    cfg.display.fps = 1000
+    cfg.highscore_file = tmp_path / "hs.json"
+    run(cfg, use_serial=False, max_frames=200, sim_calibration=True)
