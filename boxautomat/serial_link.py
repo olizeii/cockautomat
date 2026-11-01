@@ -18,8 +18,10 @@ from .protocol import Connection, DeviceReady, Event, parse_line
 
 log = logging.getLogger(__name__)
 
-# USB-IDs typischer Arduino-Nano-Varianten (Original, CH340-Klon, FTDI, CP210x)
+# USB-IDs typischer Boards (ESP32-S3, Arduino Nano und ihre USB-Seriell-Chips)
 KNOWN_USB_IDS = {
+    (0x303A, None),   # Espressif (ESP32-S3 am nativen USB-Anschluss)
+    (0x1A86, 0x55D3), # CH343 (UART-Anschluss vieler ESP32-S3-Boards)
     (0x2341, None),   # Arduino SA
     (0x2A03, None),   # Arduino.org
     (0x1A86, 0x7523), # CH340 (die meisten Nano-Klone)

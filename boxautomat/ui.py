@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pygame
 
-from .calibration import ABORT_SECONDS, CLIP_MG, DONE_SECONDS, LIVE_SECONDS, Calibration
+from .calibration import ABORT_SECONDS, DONE_SECONDS, LIVE_SECONDS, Calibration
 from .game import Game, State
 from .highscores import Highscores
 
@@ -56,7 +56,8 @@ CAL_STEPS = (("REST", "RUHE"), ("LIGHT", "LEICHT"), ("HARD", "HART"))
 CAL_REASONS = {"first": "ERSTE EINRICHTUNG", "switch": "PER SCHALTER", "command": "PER TASTE"}
 CAL_REJECTS = {"MOVING": "BEWEGUNG ERKANNT  SACK RUHIG HALTEN",
                "WEAK": "ZU SCHWACH  FESTER ZUSCHLAGEN"}
-GRID_G = (0.5, 1, 2, 4, 8, 16)
+GRID_G = (1, 2, 5, 10, 20, 50, 100, 200, 400)
+LOG_FLOOR_MG = 500          # alles darunter (Rauschen) liegt unten auf der Nulllinie
 
 
 def _g(mg: int) -> str:
@@ -649,7 +650,7 @@ class Renderer:
         if finished and cal.aborted:
             big, grad, sub = "ABGEBROCHEN", FIRE, "ALTE WERTE BLEIBEN AKTIV"
         elif finished:
-            big, grad, sub = "FERTIG", TOXIC, "WERTE SIND IM ARDUINO GESPEICHERT"
+            big, grad, sub = "FERTIG", TOXIC, "WERTE SIND IM ESP32 GESPEICHERT"
         elif cal.step == "REST":
             big, grad, sub = "NICHT BERUEHREN", ICE, "RUHELAGE UND RAUSCHEN WERDEN GEMESSEN"
         elif cal.step == "LIGHT":
@@ -682,10 +683,12 @@ class Renderer:
 
         # Hinweise unten: Übersteuerung > abgelehnter Schlag
         msg, col = None, AMBER
+        fix = ("MESSBEREICH IM SKETCH ERHOEHEN" if cal.range_g < 400
+               else "SENSOR NAEHER ANS SCHARNIER SETZEN")
         if cal.clipped:
-            msg, col = "UEBERSTEUERT  SENSOR NAEHER ANS SCHARNIER SETZEN", RED
+            msg, col = f"UEBERSTEUERT  {fix}", RED
         elif cal.near_limit:
-            msg = "AM MESSLIMIT  SENSOR NAEHER ANS SCHARNIER SETZEN"
+            msg = f"AM MESSLIMIT  {fix}"
         elif cal.reject and now - cal.reject_at < 3 and not finished:
             msg, col = CAL_REJECTS.get(cal.reject, cal.reject), RED
         if msg and int(now * 2.5) % 3 != 2:
@@ -698,7 +701,7 @@ class Renderer:
         self._put(screen, self.text(self.f_tiny, footer, GREY), w / 2, 95.5 * u)
 
     def _draw_scope(self, screen, cal: Calibration, now: float, panel: pygame.Rect) -> None:
-        """Oszilloskop: Beschleunigung der letzten Sekunden, Wurzel-Skala bis 16 g."""
+        """Oszilloskop: Beschleunigung der letzten Sekunden, logarithmisch bis zum Messbereich."""
         u = self.u
         lw = max(2, int(0.3 * u))
         pygame.draw.rect(screen, (4, 14, 12), panel, border_radius=int(u))
@@ -707,24 +710,27 @@ class Renderer:
                   panel.left + 1.5 * u, panel.top + 1.2 * u, "topleft")
         plot = pygame.Rect(panel.left + int(7 * u), panel.top + int(5.5 * u),
                            panel.width - int(9 * u), panel.height - int(7.5 * u))
-        top_mg = CLIP_MG * 1.05
+        clip_mg = cal.clip_mg
+        top_mg = clip_mg * 1.05
 
         def gy(mg: float) -> float:
-            return plot.bottom - plot.height * math.sqrt(min(max(mg, 0), top_mg) / top_mg)
+            # log: leichte Klopfer (wenige g) und harte Schläge (bis 200 g) gut sichtbar
+            frac = math.log(min(max(mg, LOG_FLOOR_MG), top_mg) / LOG_FLOOR_MG) / math.log(top_mg / LOG_FLOOR_MG)
+            return plot.bottom - plot.height * frac
 
         def gx(t: float) -> float:
             return plot.right - (now - t) / LIVE_SECONDS * plot.width
 
-        for g in GRID_G:
+        for g in (g for g in GRID_G if LOG_FLOOR_MG < g * 1000 <= clip_mg):
             y = gy(g * 1000)
             pygame.draw.line(screen, (0, 46, 36), (plot.left, y), (plot.right, y), 1)
             self._put(screen, self.text(self.f_seg_tiny, f"{g:g}", (0, 150, 110), aa=True),
                       plot.left - 1.2 * u, y, "midright")
 
         # Grenzen: Messlimit, Schwellen
-        y = gy(CLIP_MG)
+        y = gy(clip_mg)
         pygame.draw.line(screen, RED, (plot.left, y), (plot.right, y), lw)
-        self._put(screen, self.text(self.f_tiny, "CLIP", RED), plot.left + u, y - 0.6 * u, "bottomleft")
+        self._put(screen, self.text(self.f_tiny, "CLIP", RED), plot.right - u, y + 0.6 * u, "topright")
         if cal.result:
             for mg, label, col, anchor, x in (
                     (cal.result.trigger_mg, "SCHWELLE", GREEN, "bottomleft", plot.left + u),
@@ -772,7 +778,8 @@ class Renderer:
             return "  ".join(f"{mg / 1000:.1f}" for mg, _ in hits) if hits else "--"
 
         live = cal.live_mg
-        live_col = RED if live >= CLIP_MG * 0.95 else AMBER if live >= 8000 else GREEN
+        live_col = (RED if live >= cal.clip_mg * 0.95 else AMBER if live >= cal.clip_mg * 0.4
+                    else GREEN)
         info = cal.info
         old = cal.old_config or cal.config
         if cal.result:
@@ -791,7 +798,7 @@ class Renderer:
             ("LEICHT", peaks(cal.light), "G", CYAN),
             ("HART", peaks(cal.hard), "G", RED if cal.clipped else AMBER),
             ("ABTASTRATE", str(info.rate_hz) if info else "--", "HZ", WHITE),
-            ("TEMPERATUR", f"{info.temp_dc / 10:.1f}" if info else "--", "C", WHITE),
+            ("MESSBEREICH", str(cal.range_g), "G", WHITE),
             ("LAGE XYZ", " ".join(f"{v / 1000:.2f}" for v in info.base_mg) if info else "--",
              "G", WHITE),
             ("SCHWELLE", _g(trig) if trig is not None else "--", "G", new_col),

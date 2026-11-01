@@ -1,7 +1,7 @@
 # 🥊 Boxautomat – DIY Punch Machine
 
-Ein selbstgebauter Boxautomat: Ein **Arduino Nano** misst mit einem **MPU-6050**-Beschleunigungssensor
-die Schlagkraft und schickt sie per USB an einen **Ubuntu-Laptop**. Dort läuft auf dem **Zweitbildschirm**
+Ein selbstgebauter Boxautomat: Ein **ESP32-S3** misst mit einem **H3LIS331**-Beschleunigungssensor
+(bis ±400 g) die Schlagkraft und schickt sie per USB an einen **Ubuntu-Laptop**. Dort läuft auf dem **Zweitbildschirm**
 eine Arcade-Oberfläche in Python/pygame:
 
 - **Idle:** Pixel-Art-Boxvideo in Endlosschleife, unten eine Leiste mit Highscore und blinkendem „HAU DRAUF“
@@ -14,16 +14,16 @@ eine Arcade-Oberfläche in Python/pygame:
 
 ```
 ┌──────────────┐  USB (115200 Baud)  ┌──────────────────────────────┐   HDMI   ┌───────────────┐
-│ Arduino Nano │ ──── "H 734 12100" ─▶│ Laptop: python -m boxautomat │ ───────▶ │ Zweitbildschirm│
-│  + MPU-6050  │ ──── "S1" / "S0" ──▶ │  (pygame + OpenCV)           │          │  (Vollbild)    │
+│   ESP32-S3   │ ──── "H 734 52100" ─▶│ Laptop: python -m boxautomat │ ───────▶ │ Zweitbildschirm│
+│  + H3LIS331  │ ──── "S1" / "S0" ──▶ │  (pygame + OpenCV)           │          │  (Vollbild)    │
 └──────────────┘                     └──────────────────────────────┘          └───────────────┘
 ```
 
 ## Projektstruktur
 
 ```
-arduino/boxautomat_sensor/   Arduino-Sketch (Schlagerkennung, Schalter)
-arduino/boxautomat_simple/   einfache Alternative mit MPU6050-Bibliothek (nur Schlag, kein Schalter)
+arduino/boxautomat_sensor/   Firmware ESP32-S3 + H3LIS331 (Schlagerkennung, Kalibrierung, Schalter)
+arduino/boxautomat_simple/   alte einfache Variante: Arduino Nano + MPU-6050 (nur Schlag, kein Schalter)
 boxautomat/                  Python-App
   app.py                     Fenster, Hauptschleife, Tastatur
   game.py                    Zustandsautomat IDLE → COUNTING → RESULT → IDLE (+ SCOREBOARD)
@@ -40,28 +40,38 @@ install.sh / run_boxautomat.sh
 
 ## 1. Hardware verkabeln
 
-| MPU-6050 (GY-521) | Arduino Nano |
+| Adafruit H3LIS331 | ESP32-S3 |
 |---|---|
-| VCC | 5V |
+| VIN | 3V3 |
 | GND | GND |
-| SDA | A4 |
-| SCL | A5 |
+| SDA | GPIO 8 |
+| SCL | GPIO 9 |
 
-Scoreboard-Schalter: **D2 → Schalter → GND** (kein Widerstand nötig, interner Pull-up).
+Alternativ geht das STEMMA-QT-Kabel, wenn dein Board eine passende Buchse hat (dann deren Pins im Sketch
+bei `I2C_SDA` / `I2C_SCL` eintragen). I²C-Adresse 0x18, mit SDO an 3V3: 0x19 (`ACC_ADDR`).
+
+Scoreboard-Schalter: **GPIO 10 → Schalter → GND** (kein Widerstand nötig, interner Pull-up).
+Beim Kippschalter mit 3 Beinen: mittleres Bein an GPIO 10, ein äußeres an GND.
+Andere Pins gehen auch, nur nicht GPIO 0, 3, 45, 46 (Startverhalten) und 19/20 (USB).
+
+Messbereich: `RANGE_G` oben im Sketch, 100, 200 (Standard) oder 400 g. Kleiner = feinere Auflösung bei
+leichten Schlägen, größer = mehr Reserve für harte.
 
 Tipps zur Montage:
 - Sensor **fest** mit dem Schlagpolster verschrauben/verkleben – jedes Spiel verfälscht die Werte.
 - I²C-Kabel kurz halten (< 30 cm) und verdrillen. Bei langen Kabeln stört der Schlag gern den Bus.
 - USB-Kabel mit Zugentlastung befestigen. Falls es doch mal wackelt, verbindet sich die Software jetzt von selbst neu.
 
-## 2. Arduino flashen
+## 2. ESP32-S3 flashen
 
-1. `arduino/boxautomat_sensor/boxautomat_sensor.ino` in der Arduino IDE öffnen
-2. Board **Arduino Nano**, Prozessor **ATmega328P** (bei Klonen meist **„Old Bootloader“**)
-3. Hochladen
-4. Serieller Monitor auf **115200 Baud**: Es sollte `READY 2.1` erscheinen. Bei einem Schlag kommt
-   `H <punkte> <spitzenwert_mg> <clip>`.
-5. Beim allerersten Start ist im EEPROM noch nichts gespeichert, deshalb beginnt sofort die
+1. In der Arduino IDE das Board-Paket **esp32** von Espressif installieren (Boardverwalter)
+2. `arduino/boxautomat_sensor/boxautomat_sensor.ino` öffnen, Board **ESP32S3 Dev Module**
+3. Hängt der ESP32 am nativen USB-Anschluss (oft „USB“ beschriftet): **Werkzeuge → USB CDC On Boot →
+   Enabled**. Am Anschluss „COM“/„UART“ ist das nicht nötig.
+4. Hochladen. Eine zusätzliche Bibliothek braucht es nicht.
+5. Serieller Monitor auf **115200 Baud**: Nach einem Reset oder dem Befehl `?` erscheint `READY 3.0`.
+   Bei einem Schlag kommt `H <punkte> <spitzenwert_mg> <clip>`.
+6. Beim allerersten Start ist noch nichts gespeichert, deshalb beginnt sofort die
    **Kalibrierung** (siehe Abschnitt 5). Am besten läuft dabei schon die App, sie führt durch die Schritte.
 
 Befehle im Seriellen Monitor: `?` zeigt die Einstellungen, `c` misst die Ruhelage neu, `k` startet
@@ -110,22 +120,23 @@ Highscore). `video_fit = "cover"` füllt den Bildschirm und schneidet dafür lin
 
 **Schlagkraft-Kalibrierung:** Wie viel g ein Schlag ergibt, hängt stark davon ab, wo der Sensor sitzt:
 Je weiter weg vom Drehpunkt (Scharnier / Drehwirbel), desto größer der Ausschlag. Deshalb misst der
-Arduino Schwelle und 999-Punkte-Wert selbst und speichert sie im EEPROM.
+ESP32 Schwelle und 999-Punkte-Wert selbst und speichert sie im Flash.
 
 Kalibrierung starten:
-- automatisch beim ersten Start (EEPROM leer)
+- automatisch beim ersten Start (noch nichts gespeichert)
 - **Scoreboard-Schalter 6× schnell hin- und herkippen** (innerhalb von 4 Sekunden), genauso abbrechen
 - Taste `K` in der App oder `k` im Seriellen Monitor
 
-Ablauf (die App zeigt dabei Live-Kurve, alle Spitzenwerte, Rauschen, Abtastrate, Temperatur, Lage
-des Sensors sowie alte und neue Werte):
+Ablauf (die App zeigt dabei Live-Kurve, alle Spitzenwerte, Rauschen, Abtastrate, Messbereich,
+Lage des Sensors sowie alte und neue Werte):
 1. **Ruhe:** etwa 3 Sekunden nicht berühren. Dabei werden Ruhelage und Rauschen gemessen.
 2. **3× leicht klopfen:** Die Schwelle wird 70 % des schwächsten Klopfers.
-3. **3× voll draufhauen:** 999 Punkte = Mittelwert + 30 % Reserve (höchstens 16 g). Ein harter Schlag,
+3. **3× voll draufhauen:** 999 Punkte = Mittelwert + 30 % Reserve (höchstens 95 % des Messbereichs). Ein harter Schlag,
    der nicht mindestens 1,5× so stark ist wie der stärkste leichte, zählt nicht.
 
 Meldet die App **„UEBERSTEUERT“** oder **„AM MESSLIMIT“**, kommt der Sensor bei harten Schlägen an
-seine Grenze von ±16 g. Dann den Sensor näher an den Drehpunkt setzen und neu kalibrieren.
+seine Grenze. Dann `RANGE_G` im Sketch erhöhen (200 → 400) bzw. bei 400 g den Sensor näher an den
+Drehpunkt setzen und neu kalibrieren.
 Nach einer Neukalibrierung sind alte Highscores nicht mehr ganz vergleichbar.
 
 Weitere Konstanten oben im Sketch: `SCORE_EXPONENT` (< 1 gibt schwachen Schlägen mehr Punkte),
@@ -137,7 +148,9 @@ Weitere Konstanten oben im Sketch: `SCORE_EXPONENT` (< 1 gibt schwachen Schläge
 | Problem | Lösung |
 |---|---|
 | „NO SENSOR“ blinkt unten rechts | USB-Kabel prüfen, `ls /dev/ttyUSB* /dev/ttyACM*`, Gruppe `dialout`, brltty entfernen |
-| `ERR MPU6050 nicht gefunden` im Log | SDA/SCL vertauscht? 5V/GND? Bei AD0 = HIGH im Sketch `MPU_ADDR = 0x69` setzen |
+| `ERR H3LIS331 nicht gefunden` im Log | SDA/SCL vertauscht oder andere Pins als `I2C_SDA`/`I2C_SCL`? 3V3/GND? Bei SDO an 3V3 im Sketch `ACC_ADDR = 0x19` setzen |
+| Im Seriellen Monitor kommt nichts | am nativen USB-Anschluss „USB CDC On Boot: Enabled“ einstellen und neu hochladen |
+| Schalter zeigt immer `S1` | der Pin ist dauerhaft mit GND verbunden: Schalterbeine prüfen (mittleres Bein an den Pin) |
 | Fenster auf falschem Bildschirm | `display_index` in `config.toml` ändern |
 | Video ruckelt | `fps = 30` setzen oder das Video auf Bildschirmauflösung herunterrechnen |
 | Bildschirm geht nach Minuten aus | wird von `run_boxautomat.sh` über `xset` abgeschaltet; zusätzlich in den Ubuntu-Einstellungen „Bildschirm ausschalten: Nie“ wählen |
@@ -157,7 +170,7 @@ Die Tests prüfen das Protokoll, den Zustandsautomaten, die Highscores und die U
 | Richtung | Zeile | Bedeutung |
 |---|---|---|
 | Arduino → PC | `READY <version>` | gestartet |
-| | `CFG <trigger_mg> <max_mg> <eeprom\|default>` | aktive Einstellung |
+| | `CFG <trigger_mg> <max_mg> <eeprom\|default> <range_g>` | aktive Einstellung |
 | | `H <score> <peak_mg> <clip>` | Schlag (`clip` 1 = Sensor am Anschlag) |
 | | `CAL BEGIN/STATE/REST/HIT/REJECT/LIVE/INFO/DONE/ABORT …` | Kalibrierung (Details oben im Sketch) |
 | | `S1` / `S0` | Scoreboard-Schalter an/aus (wird alle 2 s wiederholt) |

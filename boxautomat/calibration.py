@@ -12,7 +12,7 @@ from collections import deque
 from .protocol import (CalAbort, CalBegin, CalDone, CalHit, CalInfo, CalLive, CalReject,
                        CalRest, CalState, Connection, SensorConfig)
 
-CLIP_MG = 16000            # mehr kann der MPU-6050 nicht messen
+DEFAULT_RANGE_G = 200      # H3LIS331, bis die Firmware ihren Messbereich meldet (CFG)
 RESERVE = 1.3              # wie in der Firmware: 999 = Mittel hart * 1,3
 LIVE_SECONDS = 6.0         # so lange reicht die Kurve zurück
 DONE_SECONDS = 15.0        # so lange bleibt das Ergebnis stehen
@@ -130,7 +130,16 @@ class Calibration:
         """Auslöseschwelle der Firmware während der Kalibrierung (gleiche Formel)."""
         if self.noise_mg is None:
             return None
-        return max(int(self.noise_mg * 3), 250)
+        return max(int(self.noise_mg * 3), 500)
+
+    @property
+    def range_g(self) -> int:
+        return self.config.range_g if self.config else DEFAULT_RANGE_G
+
+    @property
+    def clip_mg(self) -> int:
+        """So viel kann der Sensor höchstens messen."""
+        return self.range_g * 1000
 
     @property
     def clipped(self) -> bool:
@@ -143,7 +152,7 @@ class Calibration:
         if not self.hard:
             return False
         mean = sum(mg for mg, _ in self.hard) / len(self.hard)
-        return mean * RESERVE >= CLIP_MG
+        return mean * RESERVE >= self.clip_mg * 0.95
 
 
 def demo_events(t0: float) -> list[tuple[float, object]]:
@@ -151,34 +160,35 @@ def demo_events(t0: float) -> list[tuple[float, object]]:
     rng = random.Random(7)
     out: list[tuple[float, object]] = [
         (0.0, CalBegin("command")), (0.0, CalState("REST", 0, 1)),
-        (0.2, CalInfo(1012, 268, (31, -987, 112))),
+        (0.2, CalInfo(1000, None, (40, -1010, 120))),
     ]
-    # Zeitpunkte und Spitzen der Schläge
-    light = [(5.0, 820), (6.6, 960), (8.1, 760)]
-    hard = [(11.0, 9400), (12.4, 1200), (13.8, 12100), (15.3, 13300)]
+    # Zeitpunkte und Spitzen der Schläge (H3LIS331, ±200 g)
+    light = [(5.0, 4200), (6.6, 5100), (8.1, 3800)]
+    hard = [(11.0, 61000), (12.4, 6900), (13.8, 74000), (15.3, 82000)]
     peaks = {t: mg for t, mg in light + hard}
     t = 0.0
     while t < 15.6:
-        mg = 0 if t < 1.0 else int(abs(rng.gauss(0, 25)))
+        mg = 0 if t < 1.0 else int(abs(rng.gauss(0, 150)))
         for tp, pk in peaks.items():
             if 0 <= t - tp < 0.4:
                 mg = max(mg, int(pk * math.exp(-(t - tp) * 9) * (0.85 + 0.3 * rng.random())))
         out.append((t, CalLive(mg)))
         t += 0.04
-    out += [(2.5, CalRest(48)), (2.5, CalState("LIGHT", 0, 3))]
+    out += [(2.5, CalRest(390)), (2.5, CalState("LIGHT", 0, 3))]
     for i, (tp, pk) in enumerate(light, 1):
         out.append((tp + 0.12, CalHit("LIGHT", i, pk, False)))
         out.append((tp + 0.12, CalState("LIGHT", i, 3) if i < 3 else CalState("HARD", 0, 3)))
     n = 0
     for tp, pk in hard:
-        if pk < 960 * 1.5:          # zweiter Schlag ist absichtlich zu schwach
+        if pk < 5100 * 1.5:         # zweiter Schlag ist absichtlich zu schwach
             out.append((tp + 0.12, CalReject("WEAK")))
             continue
         n += 1
         out.append((tp + 0.12, CalHit("HARD", n, pk, False)))
         if n < 3:
             out.append((tp + 0.12, CalState("HARD", n, 3)))
-    mean = (9400 + 12100 + 13300) / 3
-    out.append((15.6, CalDone(int(760 * 0.7), int(min(mean * RESERVE, CLIP_MG)), 0)))
-    out.append((15.6, SensorConfig(int(760 * 0.7), int(min(mean * RESERVE, CLIP_MG)), "eeprom")))
+    mean = (61000 + 74000 + 82000) / 3
+    trigger, top = int(3800 * 0.7), int(min(mean * RESERVE, DEFAULT_RANGE_G * 950))
+    out.append((15.6, CalDone(trigger, top, 0)))
+    out.append((15.6, SensorConfig(trigger, top, "eeprom", DEFAULT_RANGE_G)))
     return sorted(((t0 + t, ev) for t, ev in out), key=lambda x: x[0])

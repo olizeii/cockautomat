@@ -162,6 +162,8 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
                     game.on_switch(ev.on, now)
                 elif isinstance(ev, Connection):
                     connected = ev.connected
+                    if connected:   # ESP32 mit nativem USB startet beim Verbinden nicht neu
+                        link.send("?")
                 elif isinstance(ev, DeviceMessage):
                     (log.error if ev.level == "ERR" else log.info)("Arduino: %s", ev.text)
 

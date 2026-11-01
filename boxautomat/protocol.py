@@ -35,10 +35,11 @@ class Connection:
 
 @dataclass(frozen=True)
 class SensorConfig:
-    """Aktive Schwelle / 999-Wert der Firmware (aus EEPROM oder Standard)."""
+    """Aktive Schwelle / 999-Wert der Firmware (gespeichert oder Standard)."""
     trigger_mg: int
     max_mg: int
     source: str             # "eeprom" | "default"
+    range_g: int = 16       # Messbereich des Sensors (alte MPU-6050-Firmware: 16)
 
 
 # -- Kalibrierung (Zeilen "CAL ...") ----------------------------------------------
@@ -80,7 +81,7 @@ class CalLive:
 @dataclass(frozen=True)
 class CalInfo:
     rate_hz: int
-    temp_dc: int            # 1/10 °C
+    temp_dc: int | None     # 1/10 °C, None wenn der Sensor keine Temperatur hat
     base_mg: tuple[int, int, int]
 
 
@@ -116,7 +117,8 @@ def _parse_cal(rest: str) -> CalEvent | None:
     if kind == "LIVE":
         return CalLive(int(a[0]))
     if kind == "INFO":
-        return CalInfo(int(a[0]), int(a[1]), (int(a[2]), int(a[3]), int(a[4])))
+        temp = None if a[1] == "-" else int(a[1])
+        return CalInfo(int(a[0]), temp, (int(a[2]), int(a[3]), int(a[4])))
     if kind == "DONE":
         return CalDone(int(a[0]), int(a[1]), int(a[2]))
     if kind == "ABORT":
@@ -151,7 +153,9 @@ def parse_line(line: str) -> Event | None:
     if head == "CFG":
         parts = rest.split()
         try:
-            return SensorConfig(int(parts[0]), int(parts[1]), parts[2] if len(parts) > 2 else "?")
+            return SensorConfig(int(parts[0]), int(parts[1]),
+                                parts[2] if len(parts) > 2 else "?",
+                                int(parts[3]) if len(parts) > 3 else 16)
         except (IndexError, ValueError):
             return None
     if head == "CAL":

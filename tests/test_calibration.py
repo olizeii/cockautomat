@@ -11,9 +11,11 @@ def test_parse_calibration_lines():
     assert parse_line("CAL REJECT WEAK") == CalReject("WEAK")
     assert parse_line("CAL LIVE 812") == CalLive(812)
     assert parse_line("CAL INFO 998 274 12 -990 85") == CalInfo(998, 274, (12, -990, 85))
+    assert parse_line("CAL INFO 1000 - 40 -1010 120") == CalInfo(1000, None, (40, -1010, 120))
     assert parse_line("CAL DONE 532 15080 0") == CalDone(532, 15080, 0)
     assert parse_line("CAL ABORT") == CalAbort()
-    assert parse_line("CFG 2000 15500 default") == SensorConfig(2000, 15500, "default")
+    assert parse_line("CFG 2000 15500 default") == SensorConfig(2000, 15500, "default", 16)
+    assert parse_line("CFG 3000 60000 eeprom 200") == SensorConfig(3000, 60000, "eeprom", 200)
     assert parse_line("H 512 9340 1") == Hit(512, 9340, True)
 
 
@@ -25,14 +27,15 @@ def test_broken_calibration_lines_ignored():
 
 def test_demo_run_ends_with_saved_values():
     cal = Calibration()
-    cal.apply(SensorConfig(2000, 15500, "default"), 0.0)
+    cal.apply(SensorConfig(3000, 60000, "default", 200), 0.0)
     for t, ev in demo_events(0.0):
         cal.apply(ev, t)
     assert not cal.active and not cal.aborted
-    assert [mg for mg, _ in cal.light] == [820, 960, 760]
+    assert [mg for mg, _ in cal.light] == [4200, 5100, 3800]
     assert len(cal.hard) == 3                      # der zu schwache Schlag zählt nicht
-    assert cal.result.trigger_mg == 532
-    assert cal.old_config == SensorConfig(2000, 15500, "default")
+    assert cal.result.trigger_mg == 2660
+    assert cal.old_config == SensorConfig(3000, 60000, "default", 200)
+    assert not cal.near_limit and cal.range_g == 200
     assert cal.visible(16.0) and not cal.visible(40.0)
 
 
@@ -45,6 +48,7 @@ def test_clipping_warning():
 
 def test_near_limit_warning():
     cal = Calibration()
+    cal.apply(SensorConfig(2000, 15500, "default", 16), 0.0)    # alter 16-g-Sensor
     cal.apply(CalBegin("command"), 0.0)
     for i, mg in enumerate((12500, 13000, 12800), 1):
         cal.apply(CalHit("HARD", i, mg, False), float(i))
@@ -66,3 +70,14 @@ def test_live_window_is_trimmed():
         cal.apply(CalLive(i), i * 0.04)
     assert all(399 * 0.04 - t <= 6.0 for t, _ in cal.live)
     assert cal.live_mg == 399
+
+
+def test_near_limit_depends_on_sensor_range():
+    cal = Calibration()
+    cal.apply(SensorConfig(3000, 60000, "eeprom", 100), 0.0)
+    cal.apply(CalBegin("command"), 0.0)
+    for i, mg in enumerate((70000, 75000, 80000), 1):
+        cal.apply(CalHit("HARD", i, mg, False), float(i))
+    assert cal.near_limit                          # 75 g * 1,3 > 95 g
+    cal.apply(SensorConfig(3000, 60000, "eeprom", 400), 5.0)
+    assert not cal.near_limit
