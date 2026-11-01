@@ -130,7 +130,7 @@ class Calibration:
         """Auslöseschwelle der Firmware während der Kalibrierung (gleiche Formel)."""
         if self.noise_mg is None:
             return None
-        return max(int(self.noise_mg * 3), 500)
+        return max(int(self.noise_mg * 1.5), 500)
 
     @property
     def range_g(self) -> int:

@@ -95,13 +95,17 @@ const int           MAX_SCORE       = 999;
 const float         SCORE_EXPONENT  = 0.8;   // <1: kleine Schläge bekommen etwas mehr Punkte
 
 const float         BASELINE_ALPHA  = 0.002; // wie schnell sich die Ruhelage nachführt
+// Der H3LIS331 rauscht bei 1000 Hz stark (einzelne Werte springen um bis zu ~2 g, obwohl er
+// stillsteht). Gleitender Mittelwert über so viele Messwerte (je 1 ms) glättet das,
+// ein Schlag dauert deutlich länger und bleibt erhalten.
+const uint8_t       SMOOTH_SAMPLES  = 5;
 const unsigned long SWITCH_DEBOUNCE_MS = 40;
 
 // Kalibrierung
 const uint8_t       CAL_HITS        = 3;     // Anzahl leichte / harte Schläge
 const float         CAL_RESERVE     = 1.3;   // 999 = Mittel der harten Schläge * Reserve
 const float         CAL_MAX_G       = RANGE_G * 0.95f;  // mehr kann der Sensor nicht messen
-const float         CAL_MOVING_G    = 2.0;   // so viel Bewegung ist bei "Ruhe" zu viel
+const float         CAL_MOVING_G    = 3.0;   // so viel Bewegung ist bei "Ruhe" zu viel
 const float         CAL_MIN_DETECT_G = 0.5;  // kleinste Auslöseschwelle beim Kalibrieren
 const uint8_t       TOGGLE_COUNT    = 6;     // so oft Schalter kippen ...
 const unsigned long TOGGLE_WINDOW_MS = 4000; // ... innerhalb dieser Zeit -> Kalibrierung
@@ -170,6 +174,8 @@ float calLight[CAL_HITS], calHard[CAL_HITS];
 uint8_t calCount = 0, calClips = 0;
 float liveMax = 0;
 uint16_t sampleCount = 0, sampleRate = 0;
+float smoothBuf[SMOOTH_SAMPLES][3];
+uint8_t smoothIdx = 0, smoothFill = 0;
 unsigned long rateSince = 0;
 
 // ---------------------------------------------------------------------------
@@ -366,7 +372,7 @@ void calFinish(unsigned long now) {
     if (calLight[i] < minLight) minLight = calLight[i];
     meanHard += calHard[i] / CAL_HITS;
   }
-  float floorG = fmaxf(calNoise * 2.5f, CAL_MIN_DETECT_G);
+  float floorG = fmaxf(calNoise * 1.3f, CAL_MIN_DETECT_G);
   triggerG = fmaxf(minLight * 0.7f, floorG);
   maxG = fminf(meanHard * CAL_RESERVE, CAL_MAX_G);
   if (maxG < triggerG * 2) maxG = triggerG * 2;
@@ -423,7 +429,8 @@ float calRest(float x, float y, float z, unsigned long now) {
   unsigned long t = now - calStepSince;
   if (t < 1000) {
     calSumX += x; calSumY += y; calSumZ += z; calN++;
-    return 0;
+    float dx = x - baseX, dy = y - baseY, dz = z - baseZ;   // Live-Wert zur alten Ruhelage
+    return sqrtf(dx * dx + dy * dy + dz * dz);
   }
   if (calN > 0) {
     baseX = calSumX / calN; baseY = calSumY / calN; baseZ = calSumZ / calN;
@@ -439,7 +446,7 @@ float calRest(float x, float y, float z, unsigned long now) {
   }
   if (g > calNoise) calNoise = g;
   if (t >= 2500) {
-    calDetectG = fmaxf(calNoise * 3.0f, CAL_MIN_DETECT_G);
+    calDetectG = fmaxf(calNoise * 1.5f, CAL_MIN_DETECT_G);
     Serial.print(F("CAL REST "));
     Serial.println((long)(calNoise * 1000.0f));
     calEnterStep(CAL_LIGHT, now);
@@ -610,6 +617,22 @@ void loop() {
     return;
   }
   if (got == 0) return;         // noch kein neuer Messwert (Sensor liefert 1000 pro Sekunde)
+
+  // gleitender Mittelwert gegen das Sensorrauschen
+  smoothBuf[smoothIdx][0] = x;
+  smoothBuf[smoothIdx][1] = y;
+  smoothBuf[smoothIdx][2] = z;
+  smoothIdx = (smoothIdx + 1) % SMOOTH_SAMPLES;
+  if (smoothFill < SMOOTH_SAMPLES) smoothFill++;
+  x = y = z = 0;
+  for (uint8_t i = 0; i < smoothFill; i++) {
+    x += smoothBuf[i][0];
+    y += smoothBuf[i][1];
+    z += smoothBuf[i][2];
+  }
+  x /= smoothFill;
+  y /= smoothFill;
+  z /= smoothFill;
 
   // Abtastrate messen (für den Kalibrier-Bildschirm)
   sampleCount++;
