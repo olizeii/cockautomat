@@ -1,17 +1,17 @@
 /*
- * Boxautomat – Sensor-Firmware für ESP32-S3 mit H3LIS331 (±100/200/400 g)
- * ========================================================================
+ * Boxautomat – Sensor-Firmware für Seeed XIAO ESP32-S3 mit H3LIS331 (±100/200/400 g)
+ * ==================================================================================
  *
- * Hardware:
- *   Adafruit H3LIS331 (I2C)  VIN -> 3V3, GND -> GND, SDA -> GPIO 8, SCL -> GPIO 9
- *                            (oder per STEMMA-QT-Kabel; Adresse 0x18, mit SDO an 3V3: 0x19)
- *   Scoreboard-Schalter      GPIO 10 -> Schalter -> GND  (interner Pull-up)
- *   Status-LED               Onboard-LED blitzt bei jedem Schlag (falls vorhanden)
+ * Hardware (Beschriftung auf dem XIAO in Klammern):
+ *   Adafruit H3LIS331 (I2C)  VIN -> 3V3, GND -> GND, SDA -> GPIO 5 (D4), SCL -> GPIO 6 (D5)
+ *                            (oder per STEMMA-QT-Kabel; Adresse 0x18 oder 0x19 wird selbst erkannt)
+ *   Scoreboard-Schalter      GPIO 2 (D1) -> Schalter -> GND  (interner Pull-up)
+ *                            Kippschalter: Mittelkontakt an D1, ein Außenkontakt an GND
+ *   Status-LED               gelbe Onboard-LED blitzt bei jedem Schlag
  *
- * Arduino IDE: Board "ESP32S3 Dev Module". Am nativen USB-Anschluss ("USB") zusätzlich
- *   Werkzeuge -> "USB CDC On Boot: Enabled", sonst kommt im Seriellen Monitor nichts an.
- *   Am Anschluss "COM"/"UART" (USB-Seriell-Chip) geht es ohne diese Einstellung.
+ * Arduino IDE: Board "XIAO_ESP32S3", Werkzeuge -> "USB CDC On Boot: Enabled" (Standard beim XIAO).
  *   Keine zusätzliche Bibliothek nötig.
+ *   Anderes ESP32-S3-Board: unten I2C_SDA / I2C_SCL / SWITCH_PIN auf dessen GPIO-Nummern ändern.
  *
  * Funktionsweise:
  *   - Liest den Beschleunigungssensor mit 1000 Hz (Messbereich siehe RANGE_G).
@@ -67,14 +67,19 @@
 const char*         FW_VERSION      = "3.0";
 const unsigned long BAUDRATE        = 115200;
 
-const uint8_t       ACC_ADDR        = 0x18;  // 0x19, wenn SDO/SA0 auf 3V3 liegt
-const int           I2C_SDA         = 8;
-const int           I2C_SCL         = 9;
-const int           SWITCH_PIN      = 10;
+// Pins als GPIO-Nummern (XIAO ESP32-S3: D4 = 5, D5 = 6, D1 = 2)
+const int           I2C_SDA         = 5;     // D4
+const int           I2C_SCL         = 6;     // D5
+const int           SWITCH_PIN      = 2;     // D1
 #ifdef LED_BUILTIN
 const int           LED_PIN         = LED_BUILTIN;
 #else
 const int           LED_PIN         = -1;    // Board ohne Onboard-LED
+#endif
+#if defined(ARDUINO_XIAO_ESP32S3)
+const bool          LED_ACTIVE_LOW  = true;  // die gelbe XIAO-LED leuchtet bei LOW
+#else
+const bool          LED_ACTIVE_LOW  = false;
 #endif
 
 const int           RANGE_G         = 200;   // Messbereich: 100, 200 oder 400 (g)
@@ -114,6 +119,9 @@ const int16_t RAW_CLIP        = 2040;        // 12-Bit-Wert: ab hier ist eine Ac
 // ---------------------------------------------------------------------------
 // Gespeicherte Einstellung (Flash)
 // ---------------------------------------------------------------------------
+const uint8_t ACC_ADDRS[]      = {0x18, 0x19};  // 0x19, wenn SDO/SA0 auf 3V3 liegt
+uint8_t       accAddr          = 0x18;          // wird in accInit() erkannt
+
 const uint8_t SETTINGS_VERSION = 2;
 Preferences prefs;
 
@@ -168,7 +176,7 @@ unsigned long rateSince = 0;
 // LED
 // ---------------------------------------------------------------------------
 void led(bool on) {
-  if (LED_PIN >= 0) digitalWrite(LED_PIN, on ? HIGH : LOW);
+  if (LED_PIN >= 0) digitalWrite(LED_PIN, (on != LED_ACTIVE_LOW) ? HIGH : LOW);
 }
 
 // ---------------------------------------------------------------------------
@@ -208,23 +216,30 @@ void sendConfig() {
 // H3LIS331
 // ---------------------------------------------------------------------------
 bool accWrite(uint8_t reg, uint8_t value) {
-  Wire.beginTransmission(ACC_ADDR);
+  Wire.beginTransmission(accAddr);
   Wire.write(reg);
   Wire.write(value);
   return Wire.endTransmission() == 0;
 }
 
 int accReadReg(uint8_t reg) {
-  Wire.beginTransmission(ACC_ADDR);
+  Wire.beginTransmission(accAddr);
   Wire.write(reg);
   if (Wire.endTransmission(false) != 0) return -1;
-  if (Wire.requestFrom(ACC_ADDR, (uint8_t)1) != 1) return -1;
+  if (Wire.requestFrom(accAddr, (uint8_t)1) != 1) return -1;
   return Wire.read();
 }
 
 bool accInit() {
-  int who = accReadReg(REG_WHO_AM_I);
+  int who = -1;
+  for (uint8_t a : ACC_ADDRS) {            // beide möglichen Adressen probieren
+    accAddr = a;
+    who = accReadReg(REG_WHO_AM_I);
+    if (who >= 0) break;
+  }
   if (who < 0) return false;
+  Serial.print(F("INFO H3LIS331 an Adresse 0x"));
+  Serial.println(accAddr, HEX);
   if (who != 0x32) {
     Serial.print(F("INFO unerwartete Sensor-ID 0x"));
     Serial.println(who, HEX);
@@ -246,10 +261,10 @@ int accRead(float &x, float &y, float &z) {
   int status = accReadReg(REG_STATUS);
   if (status < 0) return -1;
   if (!(status & 0x08)) return 0;         // ZYXDA: neue Daten?
-  Wire.beginTransmission(ACC_ADDR);
+  Wire.beginTransmission(accAddr);
   Wire.write(REG_OUT_X_L | AUTO_INCREMENT);
   if (Wire.endTransmission(false) != 0) return -1;
-  if (Wire.requestFrom(ACC_ADDR, (uint8_t)6) != 6) return -1;
+  if (Wire.requestFrom(accAddr, (uint8_t)6) != 6) return -1;
   int16_t raw[3];
   for (uint8_t i = 0; i < 3; i++) {
     uint8_t lo = Wire.read();
@@ -535,6 +550,7 @@ void handleCommands(unsigned long now) {
 void setup() {
   pinMode(SWITCH_PIN, INPUT_PULLUP);
   if (LED_PIN >= 0) pinMode(LED_PIN, OUTPUT);
+  led(false);
   Serial.begin(BAUDRATE);
 #if ARDUINO_USB_CDC_ON_BOOT && ARDUINO_USB_MODE
   Serial.setTxTimeoutMs(0);   // ohne PC am USB nicht bei jedem print hängen bleiben
@@ -552,7 +568,7 @@ void setup() {
   if (sensorOk) {
     calibrate();
   } else {
-    Serial.println(F("ERR H3LIS331 nicht gefunden - Verkabelung SDA/SCL und Adresse pruefen"));
+    Serial.println(F("ERR H3LIS331 nicht gefunden - Verkabelung SDA=D4 SCL=D5 und 3V3/GND pruefen"));
   }
   if (!fromEeprom) {            // noch nie kalibriert -> sobald der Sensor da ist
     calPending = true;

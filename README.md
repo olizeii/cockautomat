@@ -1,6 +1,6 @@
 # 🥊 Boxautomat – DIY Punch Machine
 
-Ein selbstgebauter Boxautomat: Ein **ESP32-S3** misst mit einem **H3LIS331**-Beschleunigungssensor
+Ein selbstgebauter Boxautomat: Ein **Seeed XIAO ESP32-S3** misst mit einem **H3LIS331**-Beschleunigungssensor
 (bis ±400 g) die Schlagkraft und schickt sie per USB an einen **Ubuntu-Laptop**. Dort läuft auf dem **Zweitbildschirm**
 eine Arcade-Oberfläche in Python/pygame:
 
@@ -40,19 +40,20 @@ install.sh / run_boxautomat.sh
 
 ## 1. Hardware verkabeln
 
-| Adafruit H3LIS331 | ESP32-S3 |
+| Adafruit H3LIS331 | XIAO ESP32-S3 |
 |---|---|
 | VIN | 3V3 |
 | GND | GND |
-| SDA | GPIO 8 |
-| SCL | GPIO 9 |
+| SDA | D4 (GPIO 5) |
+| SCL | D5 (GPIO 6) |
 
-Alternativ geht das STEMMA-QT-Kabel, wenn dein Board eine passende Buchse hat (dann deren Pins im Sketch
-bei `I2C_SDA` / `I2C_SCL` eintragen). I²C-Adresse 0x18, mit SDO an 3V3: 0x19 (`ACC_ADDR`).
+Die I²C-Adresse (0x18 oder 0x19) erkennt die Firmware selbst.
 
-Scoreboard-Schalter: **GPIO 10 → Schalter → GND** (kein Widerstand nötig, interner Pull-up).
-Beim Kippschalter mit 3 Beinen: mittleres Bein an GPIO 10, ein äußeres an GND.
-Andere Pins gehen auch, nur nicht GPIO 0, 3, 45, 46 (Startverhalten) und 19/20 (USB).
+Scoreboard-Schalter: **D1 (GPIO 2) → Schalter → GND** (kein Widerstand nötig, interner Pull-up).
+Beim Kippschalter mit 3 Beinen: mittleres Bein an D1, ein äußeres an GND.
+
+Anderes ESP32-S3-Board: oben im Sketch `I2C_SDA`, `I2C_SCL` und `SWITCH_PIN` auf die **GPIO-Nummern**
+ändern (nicht die D-Beschriftung). Nicht nehmen: GPIO 0, 3, 45, 46 (Startverhalten) und 19/20 (USB).
 
 Messbereich: `RANGE_G` oben im Sketch, 100, 200 (Standard) oder 400 g. Kleiner = feinere Auflösung bei
 leichten Schlägen, größer = mehr Reserve für harte.
@@ -65,9 +66,9 @@ Tipps zur Montage:
 ## 2. ESP32-S3 flashen
 
 1. In der Arduino IDE das Board-Paket **esp32** von Espressif installieren (Boardverwalter)
-2. `arduino/boxautomat_sensor/boxautomat_sensor.ino` öffnen, Board **ESP32S3 Dev Module**
-3. Hängt der ESP32 am nativen USB-Anschluss (oft „USB“ beschriftet): **Werkzeuge → USB CDC On Boot →
-   Enabled**. Am Anschluss „COM“/„UART“ ist das nicht nötig.
+2. `arduino/boxautomat_sensor/boxautomat_sensor.ino` öffnen, Board **XIAO_ESP32S3**
+3. **Werkzeuge → USB CDC On Boot → Enabled** (beim XIAO schon Standard), sonst bleibt der
+   Serielle Monitor leer.
 4. Hochladen. Eine zusätzliche Bibliothek braucht es nicht.
 5. Serieller Monitor auf **115200 Baud**: Nach einem Reset oder dem Befehl `?` erscheint `READY 3.0`.
    Bei einem Schlag kommt `H <punkte> <spitzenwert_mg> <clip>`.
@@ -148,8 +149,8 @@ Weitere Konstanten oben im Sketch: `SCORE_EXPONENT` (< 1 gibt schwachen Schläge
 | Problem | Lösung |
 |---|---|
 | „NO SENSOR“ blinkt unten rechts | USB-Kabel prüfen, `ls /dev/ttyUSB* /dev/ttyACM*`, Gruppe `dialout`, brltty entfernen |
-| `ERR H3LIS331 nicht gefunden` im Log | SDA/SCL vertauscht oder andere Pins als `I2C_SDA`/`I2C_SCL`? 3V3/GND? Bei SDO an 3V3 im Sketch `ACC_ADDR = 0x19` setzen |
-| Im Seriellen Monitor kommt nichts | am nativen USB-Anschluss „USB CDC On Boot: Enabled“ einstellen und neu hochladen |
+| `ERR H3LIS331 nicht gefunden` im Log | SDA an D4, SCL an D5? Vertauscht? 3V3/GND? Bei anderem Board die GPIO-Nummern `I2C_SDA`/`I2C_SCL` im Sketch anpassen |
+| Im Seriellen Monitor kommt nichts | „USB CDC On Boot: Enabled“ einstellen und neu hochladen |
 | Schalter zeigt immer `S1` | der Pin ist dauerhaft mit GND verbunden: Schalterbeine prüfen (mittleres Bein an den Pin) |
 | Fenster auf falschem Bildschirm | `display_index` in `config.toml` ändern |
 | Video ruckelt | `fps = 30` setzen oder das Video auf Bildschirmauflösung herunterrechnen |
