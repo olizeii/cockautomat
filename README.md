@@ -130,10 +130,17 @@ Kalibrierung starten:
 
 Ablauf (die App zeigt dabei Live-Kurve, alle Spitzenwerte, Rauschen, Abtastrate, Messbereich,
 Lage des Sensors sowie alte und neue Werte):
-1. **Ruhe:** etwa 3 Sekunden nicht berühren. Dabei werden Ruhelage und Rauschen gemessen.
+1. **Ruhe:** Bag **unten hängen lassen** und etwa 3 Sekunden nicht berühren. Dabei werden Ruhelage,
+   Rauschen und die Lage „Bag unten“ gemessen.
 2. **3× leicht klopfen:** Die Schwelle wird 70 % des schwächsten Klopfers.
 3. **3× voll draufhauen:** 999 Punkte = Mittelwert + 30 % Reserve (höchstens 95 % des Messbereichs). Ein harter Schlag,
    der nicht mindestens 1,5× so stark ist wie der stärkste leichte, zählt nicht.
+
+**Bag oben / unten:** Die Firmware erkennt an der Richtung der Schwerkraft, ob der Bag unten hängt
+oder oben eingerastet ist (Anzeige „BAG“ im Kalibrier-Bildschirm). Ein Schlag zählt nur, wenn der Bag
+vorher unten und ruhig war. Runterlassen und Nachpendeln zählen deshalb nicht, auch nicht beim Kalibrieren.
+Ist der Bag oben, steht im Spiel „BAG RUNTERLASSEN“ statt „HAU DRAUF“. Nach einem Treffer werden
+weitere Schläge außerdem 3 Sekunden lang ignoriert (`min_hit_interval` in `config.toml`).
 
 Meldet die App **„UEBERSTEUERT“** oder **„AM MESSLIMIT“**, kommt der Sensor bei harten Schlägen an
 seine Grenze. Dann `RANGE_G` im Sketch erhöhen bzw. bei 400 g den Sensor näher an den

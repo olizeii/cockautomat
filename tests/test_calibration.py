@@ -19,6 +19,16 @@ def test_parse_calibration_lines():
     assert parse_line("H 512 9340 1") == Hit(512, 9340, True)
 
 
+def test_bag_position():
+    from boxautomat.protocol import BagPosition
+    assert parse_line("POS DOWN") == BagPosition(True)
+    assert parse_line("POS UP") == BagPosition(False)
+    cal = Calibration()
+    assert cal.bag_down is None
+    assert not cal.apply(BagPosition(False), 0.0)    # gehört nicht nur zur Kalibrierung
+    assert cal.bag_down is False
+
+
 def test_broken_calibration_lines_ignored():
     for line in ("CAL", "CAL STATE FOO 1 3", "CAL HIT LIGHT x 3", "CAL INFO 1 2", "CAL WHAT",
                  "CFG 12"):

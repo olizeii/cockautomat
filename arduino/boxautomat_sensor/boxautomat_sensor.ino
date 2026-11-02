@@ -22,11 +22,18 @@
  *   - Danach wird der Score berechnet, über USB gesendet und für
  *     DEADTIME_MS keine weitere Messung gestartet (Nachschwingen ignorieren).
  *
+ * Bag oben / unten:
+ *   Die Richtung der Schwerkraft zeigt, ob der Bag unten hängt oder oben eingerastet ist
+ *   (Referenz "unten" kommt aus dem Ruhe-Schritt der Kalibrierung). Ein Schlag zählt nur,
+ *   wenn der Bag vorher QUIET_MS lang unten und ruhig war. Das Runterlassen (oben -> fällt
+ *   herunter) und das Nachpendeln lösen deshalb keinen Schlag aus.
+ *
  * Kalibrierung (Schwelle und 999-Punkte-Wert hängen davon ab, wo der Sensor sitzt):
  *   - startet automatisch, wenn noch nichts gespeichert ist
  *   - oder: Scoreboard-Schalter schnell 6x hin- und herkippen (innerhalb 4 s)
  *   - oder: Befehl "k" vom PC
- *   Ablauf: 1. Ruhe messen (nicht berühren)  2. 3x leicht klopfen  3. 3x voll draufhauen
+ *   Ablauf: 1. Ruhe messen (Bag hängt unten, nicht berühren)  2. 3x leicht klopfen
+ *           3. 3x voll draufhauen. Zwischen den Schlägen den Bag runterlassen.
  *   Schwelle  = 70 % des schwächsten leichten Klopfers (mindestens über dem Rauschen)
  *   999 Punkte = Mittelwert der harten Schläge + 30 % Reserve (höchstens 95 % von RANGE_G)
  *   Das Ergebnis wird im Flash (Preferences) gespeichert und gilt ab sofort.
@@ -37,6 +44,7 @@
  *     CFG <trigger_mg> <max_mg> <eeprom|default> <range_g>   aktive Einstellung
  *     H <score> <peak_mg> <clip>   Schlag (score 1..999, Spitze in milli-g, clip 1 = übersteuert)
  *     S1 / S0                  Scoreboard-Schalter an / aus
+ *     POS DOWN / POS UP        Bag hängt unten (spielbereit) / ist oben eingerastet
  *     R <mg>                   Rohwert-Stream (nur wenn mit "r" eingeschaltet)
  *     ERR <text>               Fehler, z.B. Sensor nicht gefunden
  *     INFO <text>              Meldungen / Antwort auf "?"
@@ -90,7 +98,10 @@ const float         DEFAULT_MAX_G     = 60.0;  // dieser Spitzenwert ergibt 999 
 
 const unsigned long PEAK_WINDOW_MS  = 120;   // so lange nach dem Auslösen wird der Peak gesucht
 const unsigned long DEADTIME_MS     = 1500;  // Sperrzeit nach einem Schlag
-const unsigned long QUIET_MS        = 400;   // danach so lange ruhig, bevor wieder gemessen wird
+const unsigned long QUIET_MS        = 400;   // so lange unten + ruhig, bevor wieder gemessen wird
+const float         DOWN_TOLERANCE_G = 0.5;  // so weit darf die Lage von "unten" abweichen
+const float         SLOW_ALPHA      = 0.02;  // träge Lage (~50 ms) für oben/unten
+const unsigned long POS_STABLE_MS   = 150;   // so lange muss oben/unten stabil sein
 const unsigned long CAL_DEADTIME_MS = 700;   // Sperrzeit während der Kalibrierung
 const int           MAX_SCORE       = 999;
 const float         SCORE_EXPONENT  = 0.8;   // <1: kleine Schläge bekommen etwas mehr Punkte
@@ -127,7 +138,7 @@ const int16_t RAW_CLIP        = 2040;        // 12-Bit-Wert: ab hier ist eine Ac
 const uint8_t ACC_ADDRS[]      = {0x18, 0x19};  // 0x19, wenn SDO/SA0 auf 3V3 liegt
 uint8_t       accAddr          = 0x18;          // wird in accInit() erkannt
 
-const uint8_t SETTINGS_VERSION = 2;
+const uint8_t SETTINGS_VERSION = 3;          // 3: mit Lage "unten" -> neu kalibrieren
 Preferences prefs;
 
 float triggerG = DEFAULT_TRIGGER_G;
@@ -145,7 +156,15 @@ float baseX = 0, baseY = 0, baseZ = 0;       // Ruhelage (Schwerkraft) in g
 float peakG = 0;
 bool  peakClipped = false;
 unsigned long stateSince = 0;
-unsigned long quietSince = 0;                // seit wann der Sack nach einem Schlag ruhig ist
+unsigned long armedSince = 0;                // seit wann der Bag unten und ruhig ist
+
+// Lage: Schwerkraftrichtung, wenn der Bag unten hängt (aus der Kalibrierung)
+float refX = 0, refY = 0, refZ = 0;
+bool  hasRef = false;
+float slowX = 0, slowY = 0, slowZ = 0;      // träge gemittelte Lage
+bool  bagDown = true;
+bool  posCandidate = true;
+unsigned long posChangedAt = 0;
 
 bool sensorOk = false;
 unsigned long lastSensorRetry = 0;
@@ -195,11 +214,14 @@ bool loadSettings() {
   uint8_t version = prefs.getUChar("ver", 0);
   float t = prefs.getFloat("trig", 0);
   float m = prefs.getFloat("max", 0);
+  float rx = prefs.getFloat("rx", 0), ry = prefs.getFloat("ry", 0), rz = prefs.getFloat("rz", 0);
   prefs.end();
   if (version != SETTINGS_VERSION) return false;
   if (!(t > 0.05f && t < 100.0f && m > t && m <= 400.0f)) return false;
   triggerG = t;
   maxG = fminf(m, CAL_MAX_G);    // falls RANGE_G inzwischen kleiner ist
+  float len = sqrtf(rx * rx + ry * ry + rz * rz);
+  if (len > 0.3f && len < 3.0f) { refX = rx; refY = ry; refZ = rz; hasRef = true; }
   return true;
 }
 
@@ -208,6 +230,9 @@ void saveSettings() {
   prefs.putUChar("ver", SETTINGS_VERSION);
   prefs.putFloat("trig", triggerG);
   prefs.putFloat("max", maxG);
+  prefs.putFloat("rx", refX);
+  prefs.putFloat("ry", refY);
+  prefs.putFloat("rz", refZ);
   prefs.end();
 }
 
@@ -286,6 +311,11 @@ int accRead(float &x, float &y, float &z) {
   return 1;
 }
 
+float distRef(float x, float y, float z) {
+  float dx = x - refX, dy = y - refY, dz = z - refZ;
+  return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
 void calibrate() {
   float sx = 0, sy = 0, sz = 0;
   int n = 0;
@@ -295,6 +325,29 @@ void calibrate() {
     if (accRead(x, y, z) == 1) { sx += x; sy += y; sz += z; n++; }
   }
   if (n > 0) { baseX = sx / n; baseY = sy / n; baseZ = sz / n; }
+  slowX = baseX; slowY = baseY; slowZ = baseZ;
+  // eingeschaltet, während der Bag oben eingerastet ist -> Ruhelage "unten" aus dem Speicher
+  if (hasRef && distRef(baseX, baseY, baseZ) > DOWN_TOLERANCE_G) {
+    baseX = refX; baseY = refY; baseZ = refZ;
+  }
+}
+
+void sendPosition() {
+  Serial.println(bagDown ? F("POS DOWN") : F("POS UP"));
+}
+
+// Bag unten oder oben? (träge Lage mit der Referenz "unten" vergleichen)
+void updatePosition(float x, float y, float z, unsigned long now) {
+  slowX += SLOW_ALPHA * (x - slowX);
+  slowY += SLOW_ALPHA * (y - slowY);
+  slowZ += SLOW_ALPHA * (z - slowZ);
+  if (!hasRef) return;          // noch nie kalibriert: immer "unten"
+  bool down = distRef(slowX, slowY, slowZ) < DOWN_TOLERANCE_G;
+  if (down != posCandidate) { posCandidate = down; posChangedAt = now; }
+  if (down != bagDown && now - posChangedAt >= POS_STABLE_MS) {
+    bagDown = down;
+    sendPosition();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +489,10 @@ float calRest(float x, float y, float z, unsigned long now) {
   }
   if (calN > 0) {
     baseX = calSumX / calN; baseY = calSumY / calN; baseZ = calSumZ / calN;
+    refX = baseX; refY = baseY; refZ = baseZ;     // so sieht "Bag unten" aus
+    slowX = baseX; slowY = baseY; slowZ = baseZ;
+    hasRef = true;
+    if (!bagDown) { bagDown = posCandidate = true; sendPosition(); }
     calN = 0;
     calNoise = 0;
   }
@@ -505,6 +562,7 @@ void updateSwitch(unsigned long now) {
   // alle 2 s wiederholen, damit der PC nach einem Reconnect den Zustand kennt
   if (now - lastSwitchReport > 2000) {
     Serial.println(switchState ? F("S1") : F("S0"));
+    if (sensorOk) sendPosition();
     lastSwitchReport = now;
   }
 }
@@ -529,6 +587,7 @@ void handleCommands(unsigned long now) {
         Serial.print(baseY); Serial.print(','); Serial.println(baseZ);
         sendConfig();
         Serial.println(switchState ? F("S1") : F("S0"));
+        sendPosition();
         break;
       case 'c':
         Serial.println(F("INFO kalibriere Ruhelage..."));
@@ -648,6 +707,7 @@ void loop() {
     calStream(calRest(x, y, z, now), now);
     return;
   }
+  updatePosition(x, y, z, now);
 
   // Beschleunigung ohne Schwerkraft
   float dx = x - baseX, dy = y - baseY, dz = z - baseZ;
@@ -667,19 +727,27 @@ void loop() {
   }
 
   switch (state) {
-    case IDLE:
-      if (g >= threshold) {
+    case IDLE: {
+      // Nur scharf, wenn der Bag QUIET_MS lang unten und ruhig war. So zählen Runterlassen
+      // (oben -> fällt herunter) und Nachpendeln nicht als Schlag.
+      bool armed = now - armedSince >= QUIET_MS;
+      bool calm = g < threshold * 0.5f;
+      if (g >= threshold && armed && bagDown) {
         state = MEASURING;
         stateSince = now;
         peakG = g;
         peakClipped = lastClipped;
-      } else {
-        // Ruhelage langsam nachführen (Sack hängt evtl. leicht schief)
+        break;
+      }
+      if (!bagDown || !calm) armedSince = now;
+      if (bagDown && calm) {
+        // Ruhelage langsam nachführen (Sack hängt evtl. leicht schief) – nur unten
         baseX += BASELINE_ALPHA * (x - baseX);
         baseY += BASELINE_ALPHA * (y - baseY);
         baseZ += BASELINE_ALPHA * (z - baseZ);
       }
       break;
+    }
 
     case MEASURING:
       if (g > peakG) peakG = g;
@@ -695,12 +763,9 @@ void loop() {
     case DEADTIME: {
       if (now - stateSince > 80) led(false);
       unsigned long dead = calStep != CAL_OFF ? CAL_DEADTIME_MS : DEADTIME_MS;
-      float th = calStep != CAL_OFF ? calDetectG : triggerG;
-      // Erst wieder scharf, wenn der Sack QUIET_MS am Stück ruhig ist (Zurückschwingen,
-      // Ausrasten usw. sollen keinen zweiten Schlag auslösen)
-      if (g >= th * 0.5f || quietSince < stateSince) quietSince = now;
-      if (now - stateSince >= dead && now - quietSince >= QUIET_MS) {
+      if (now - stateSince >= dead) {
         state = IDLE;
+        armedSince = now;       // danach erst unten + ruhig werden lassen
       }
       break;
     }

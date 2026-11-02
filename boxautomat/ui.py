@@ -315,7 +315,7 @@ class Renderer:
 
     # -- Szenen --------------------------------------------------------------
     def draw_idle_hud(self, screen, video_rect, highscores: Highscores, connected: bool,
-                      now: float) -> None:
+                      now: float, bag_up: bool = False) -> None:
         u = self.u
         _vx, vy, _vw, vh = video_rect
         top_m, bot_m = vy, self.h - (vy + vh)
@@ -346,7 +346,8 @@ class Renderer:
 
         # Mitte: Aufforderung, blinkt im Arcade-Takt
         if (now % 1.2) < 0.85:
-            call = self.text(self.f_mid, "HAU DRAUF", gradient=FIRE, outline=self._ol(self.f_mid))
+            label, grad = ("BAG RUNTERLASSEN", ICE) if bag_up else ("HAU DRAUF", FIRE)
+            call = self.text(self.f_mid, label, gradient=grad, outline=self._ol(self.f_mid))
             self._put(screen, call, self.w / 2, cy)
 
         # rechts: Sensorstatus, nur wenn etwas fehlt
@@ -652,7 +653,7 @@ class Renderer:
         elif finished:
             big, grad, sub = "FERTIG", TOXIC, "WERTE SIND IM ESP32 GESPEICHERT"
         elif cal.step == "REST":
-            big, grad, sub = "NICHT BERUEHREN", ICE, "RUHELAGE UND RAUSCHEN WERDEN GEMESSEN"
+            big, grad, sub = "NICHT BERUEHREN", ICE, "BAG UNTEN HAENGEN LASSEN  RUHE WIRD GEMESSEN"
         elif cal.step == "LIGHT":
             big, grad, sub = "LEICHT KLOPFEN", TOXIC, f"{cal.need}X SANFT ABER ECHT ANTIPPEN"
         else:
@@ -689,6 +690,8 @@ class Renderer:
             msg, col = f"UEBERSTEUERT  {fix}", RED
         elif cal.near_limit:
             msg = f"AM MESSLIMIT  {fix}"
+        elif cal.bag_down is False and not finished and cal.step != "REST":
+            msg = "BAG IST OBEN  RUNTERLASSEN UND KURZ WARTEN"
         elif cal.reject and now - cal.reject_at < 3 and not finished:
             msg, col = CAL_REJECTS.get(cal.reject, cal.reject), RED
         if msg and int(now * 2.5) % 3 != 2:
@@ -786,10 +789,10 @@ class Renderer:
             trig, mx, source = cal.result.trigger_mg, cal.result.max_mg, "NEU"
         elif old:
             trig, mx = old.trigger_mg, old.max_mg
-            source = {"eeprom": "EEPROM", "default": "STANDARD"}.get(old.source, "--")
+            source = {"eeprom": "EEPROM", "default": "STANDARD"}.get(old.source, "UNBEKANNT")
         else:
             trig = mx = None
-            source = "--"
+            source = "UNBEKANNT"
         new_col = GREEN if cal.result else WHITE
         rows = [
             ("LIVE", _g(live), "G", live_col),
@@ -801,11 +804,13 @@ class Renderer:
             ("MESSBEREICH", str(cal.range_g), "G", WHITE),
             ("LAGE XYZ", " ".join(f"{v / 1000:.2f}" for v in info.base_mg) if info else "--",
              "G", WHITE),
+            ("BAG", None, {True: "UNTEN", False: "OBEN"}.get(cal.bag_down, "UNBEKANNT"),
+             GREEN if cal.bag_down else AMBER if cal.bag_down is False else GREY),
             ("SCHWELLE", _g(trig) if trig is not None else "--", "G", new_col),
             ("999 BEI", _g(mx) if mx is not None else "--", "G", new_col),
             ("QUELLE", None, source, new_col),
             ("FIRMWARE", cal.firmware or "--", "", GREY),
-            ("PORT", None, (port or "--").split("/")[-1].upper(), GREY),
+            ("PORT", None, port.split("/")[-1].upper() if port else "KEINER", GREY),
         ]
         first = panel.top + 5.5 * u
         row_h = (panel.bottom - u - first) / len(rows)

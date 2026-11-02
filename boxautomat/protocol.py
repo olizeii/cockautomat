@@ -34,6 +34,11 @@ class Connection:
 
 
 @dataclass(frozen=True)
+class BagPosition:
+    down: bool              # True = hängt unten (spielbereit), False = oben eingerastet
+
+
+@dataclass(frozen=True)
 class SensorConfig:
     """Aktive Schwelle / 999-Wert der Firmware (gespeichert oder Standard)."""
     trigger_mg: int
@@ -99,7 +104,8 @@ class CalAbort:
 
 CalEvent = (CalBegin | CalState | CalRest | CalHit | CalReject | CalLive | CalInfo | CalDone
             | CalAbort)
-Event = Hit | SwitchState | DeviceReady | DeviceMessage | Connection | SensorConfig | CalEvent
+Event = (Hit | SwitchState | DeviceReady | DeviceMessage | Connection | SensorConfig | BagPosition
+         | CalEvent)
 
 
 def _parse_cal(rest: str) -> CalEvent | None:
@@ -136,6 +142,10 @@ def parse_line(line: str) -> Event | None:
         return SwitchState(True)
     if line == "S0":
         return SwitchState(False)
+    if line == "POS DOWN":
+        return BagPosition(True)
+    if line == "POS UP":
+        return BagPosition(False)
 
     # Altes Protokoll: nur eine Zahl pro Zeile = Score
     if line.isdigit():

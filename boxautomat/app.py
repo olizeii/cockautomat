@@ -201,7 +201,8 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
                 video.draw(screen)
                 overlay.draw(screen)
                 renderer.draw_idle_hud(screen, video.rect, highscores,
-                                       connected or not use_serial, now)
+                                       connected or not use_serial, now,
+                                       bag_up=connected and cal.bag_down is False)
             elif game.state in (State.COUNTING, State.RESULT):
                 renderer.draw_result(screen, game, highscores.best, now)
             else:

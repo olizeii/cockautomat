@@ -9,8 +9,8 @@ import math
 import random
 from collections import deque
 
-from .protocol import (CalAbort, CalBegin, CalDone, CalHit, CalInfo, CalLive, CalReject,
-                       CalRest, CalState, Connection, SensorConfig)
+from .protocol import (BagPosition, CalAbort, CalBegin, CalDone, CalHit, CalInfo, CalLive,
+                       CalReject, CalRest, CalState, Connection, SensorConfig)
 
 DEFAULT_RANGE_G = 200      # H3LIS331, bis die Firmware ihren Messbereich meldet (CFG)
 RESERVE = 1.3              # wie in der Firmware: 999 = Mittel hart * 1,3
@@ -23,6 +23,7 @@ class Calibration:
     def __init__(self):
         self.config: SensorConfig | None = None     # aktuell aktive Firmware-Einstellung
         self.firmware: str | None = None
+        self.bag_down: bool | None = None           # None = Firmware meldet es nicht
         self.active = False
         self._reset()
 
@@ -50,6 +51,9 @@ class Calibration:
         if isinstance(ev, SensorConfig):
             self.config = ev
             return False        # App loggt es zusätzlich
+        if isinstance(ev, BagPosition):
+            self.bag_down = ev.down
+            return False
         if isinstance(ev, Connection):
             if not ev.connected and self.active:
                 self._end(now, aborted=True)    # Nano resettet beim Wiederverbinden
