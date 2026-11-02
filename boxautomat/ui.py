@@ -55,7 +55,9 @@ RATINGS = (
 CAL_STEPS = (("REST", "RUHE"), ("LIGHT", "LEICHT"), ("HARD", "HART"))
 CAL_REASONS = {"first": "ERSTE EINRICHTUNG", "switch": "PER SCHALTER", "command": "PER TASTE"}
 CAL_REJECTS = {"MOVING": "BEWEGUNG ERKANNT  SACK RUHIG HALTEN",
-               "WEAK": "ZU SCHWACH  FESTER ZUSCHLAGEN"}
+               "WEAK": "ZU SCHWACH  FESTER ZUSCHLAGEN",
+               "UP": "BAG IST OBEN  ERST RUNTERLASSEN",
+               "SETTLE": "ZU FRUEH  BAG ERST AUSPENDELN LASSEN"}
 GRID_G = (1, 2, 5, 10, 20, 50, 100, 200, 400)
 LOG_FLOOR_MG = 500          # alles darunter (Rauschen) liegt unten auf der Nulllinie
 

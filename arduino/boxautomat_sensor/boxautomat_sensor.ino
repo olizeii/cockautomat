@@ -52,7 +52,8 @@
  *     CAL STATE <REST|LIGHT|HARD> <n> <von> aktueller Schritt (auch jede Sekunde)
  *     CAL REST <noise_mg>                   Ruhemessung fertig, Rauschen
  *     CAL HIT <LIGHT|HARD> <nr> <peak_mg> <clip>   Schlag gezählt
- *     CAL REJECT <MOVING|WEAK>              nicht gezählt (Bewegung in Ruhe / harter Schlag zu schwach)
+ *     CAL REJECT <MOVING|WEAK|UP|SETTLE>    nicht gezählt (Bewegung in Ruhe / harter Schlag zu
+ *                                           schwach / Bag oben / Bag pendelt noch)
  *     CAL LIVE <mg>                         Live-Wert (Maximum der letzten 40 ms)
  *     CAL INFO <hz> - <x_mg> <y_mg> <z_mg>  Abtastrate, (keine Temperatur), Lage (Schwerkraft)
  *     CAL DONE <trigger_mg> <max_mg> <clips>        fertig und gespeichert
@@ -98,7 +99,7 @@ const float         DEFAULT_MAX_G     = 60.0;  // dieser Spitzenwert ergibt 999 
 
 const unsigned long PEAK_WINDOW_MS  = 120;   // so lange nach dem Auslösen wird der Peak gesucht
 const unsigned long DEADTIME_MS     = 1500;  // Sperrzeit nach einem Schlag
-const unsigned long QUIET_MS        = 400;   // so lange unten + ruhig, bevor wieder gemessen wird
+const unsigned long QUIET_MS        = 400;   // so lange unten, ohne Ausschlag über der Schwelle
 const float         DOWN_TOLERANCE_G = 0.5;  // so weit darf die Lage von "unten" abweichen
 const float         SLOW_ALPHA      = 0.02;  // träge Lage (~50 ms) für oben/unten
 const unsigned long POS_STABLE_MS   = 150;   // so lange muss oben/unten stabil sein
@@ -157,6 +158,7 @@ float peakG = 0;
 bool  peakClipped = false;
 unsigned long stateSince = 0;
 unsigned long armedSince = 0;                // seit wann der Bag unten und ruhig ist
+unsigned long lastBlockedReport = 0;         // "Schlag ignoriert" höchstens 1x pro Sekunde melden
 
 // Lage: Schwerkraftrichtung, wenn der Bag unten hängt (aus der Kalibrierung)
 float refX = 0, refY = 0, refZ = 0;
@@ -479,6 +481,18 @@ void calOnPeak(float peak, bool clipped, unsigned long now) {
   }
 }
 
+// Ausschlag über der Schwelle, der nicht als Schlag zählt: Grund melden (für Anzeige / Log)
+void reportBlocked(bool calibrating, unsigned long now) {
+  if (now - lastBlockedReport < 1000) return;
+  lastBlockedReport = now;
+  if (calibrating) {
+    Serial.println(bagDown ? F("CAL REJECT SETTLE") : F("CAL REJECT UP"));
+  } else {
+    Serial.println(bagDown ? F("INFO Schlag ignoriert: Bag pendelt noch")
+                           : F("INFO Schlag ignoriert: Bag ist oben"));
+  }
+}
+
 // Ruhemessung: 1 s Lage mitteln, dann 1,5 s Rauschen messen. Gibt den Live-Wert zurück.
 float calRest(float x, float y, float z, unsigned long now) {
   unsigned long t = now - calStepSince;
@@ -728,19 +742,22 @@ void loop() {
 
   switch (state) {
     case IDLE: {
-      // Nur scharf, wenn der Bag QUIET_MS lang unten und ruhig war. So zählen Runterlassen
-      // (oben -> fällt herunter) und Nachpendeln nicht als Schlag.
+      // Nur scharf, wenn der Bag QUIET_MS lang unten war, ohne die Schwelle zu überschreiten.
+      // So zählen Runterlassen (oben -> fällt herunter) und Nachpendeln nicht als Schlag.
+      // (Rauschen bleibt unter der Schwelle und hält das Scharf-Schalten nicht auf.)
       bool armed = now - armedSince >= QUIET_MS;
-      bool calm = g < threshold * 0.5f;
-      if (g >= threshold && armed && bagDown) {
-        state = MEASURING;
-        stateSince = now;
-        peakG = g;
-        peakClipped = lastClipped;
-        break;
+      if (g >= threshold) {
+        if (armed && bagDown) {
+          state = MEASURING;
+          stateSince = now;
+          peakG = g;
+          peakClipped = lastClipped;
+          break;
+        }
+        reportBlocked(calibrating, now);
       }
-      if (!bagDown || !calm) armedSince = now;
-      if (bagDown && calm) {
+      if (!bagDown || g >= threshold) armedSince = now;
+      if (bagDown && g < threshold * 0.5f) {
         // Ruhelage langsam nachführen (Sack hängt evtl. leicht schief) – nur unten
         baseX += BASELINE_ALPHA * (x - baseX);
         baseY += BASELINE_ALPHA * (y - baseY);
