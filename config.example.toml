@@ -22,6 +22,7 @@ count_up_time = 1.2      # Sekunden Hochzähl-Animation
 result_hold_time = 5.0   # Sekunden, die das Ergebnis angezeigt wird
 result_background = "frozen"   # "frozen" = gedimmtes Standbild, "black" = schwarz
 min_score = 1
+min_hit_interval = 3.0   # Sekunden nach einem Schlag, in denen Nachschwingen ignoriert wird
 max_score = 999
 play_ready_overlay = true      # "Ready Fight"-Overlay, wenn es zurück in den Loop geht
 highscore_count = 10

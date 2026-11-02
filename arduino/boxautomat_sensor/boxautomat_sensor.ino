@@ -82,14 +82,15 @@ const bool          LED_ACTIVE_LOW  = true;  // die gelbe XIAO-LED leuchtet bei 
 const bool          LED_ACTIVE_LOW  = false;
 #endif
 
-const int           RANGE_G         = 200;   // Messbereich: 100, 200 oder 400 (g)
+const int           RANGE_G         = 400;   // Messbereich: 100, 200 oder 400 (g)
 
 // Standardwerte, solange nicht kalibriert wurde
 const float         DEFAULT_TRIGGER_G = 3.0;   // ab welcher Beschleunigung ein Schlag zählt
 const float         DEFAULT_MAX_G     = 60.0;  // dieser Spitzenwert ergibt 999 Punkte
 
 const unsigned long PEAK_WINDOW_MS  = 120;   // so lange nach dem Auslösen wird der Peak gesucht
-const unsigned long DEADTIME_MS     = 1200;  // Sperrzeit nach einem Schlag
+const unsigned long DEADTIME_MS     = 1500;  // Sperrzeit nach einem Schlag
+const unsigned long QUIET_MS        = 400;   // danach so lange ruhig, bevor wieder gemessen wird
 const unsigned long CAL_DEADTIME_MS = 700;   // Sperrzeit während der Kalibrierung
 const int           MAX_SCORE       = 999;
 const float         SCORE_EXPONENT  = 0.8;   // <1: kleine Schläge bekommen etwas mehr Punkte
@@ -144,6 +145,7 @@ float baseX = 0, baseY = 0, baseZ = 0;       // Ruhelage (Schwerkraft) in g
 float peakG = 0;
 bool  peakClipped = false;
 unsigned long stateSince = 0;
+unsigned long quietSince = 0;                // seit wann der Sack nach einem Schlag ruhig ist
 
 bool sensorOk = false;
 unsigned long lastSensorRetry = 0;
@@ -694,7 +696,10 @@ void loop() {
       if (now - stateSince > 80) led(false);
       unsigned long dead = calStep != CAL_OFF ? CAL_DEADTIME_MS : DEADTIME_MS;
       float th = calStep != CAL_OFF ? calDetectG : triggerG;
-      if (now - stateSince >= dead && g < th * 0.5f) {
+      // Erst wieder scharf, wenn der Sack QUIET_MS am Stück ruhig ist (Zurückschwingen,
+      // Ausrasten usw. sollen keinen zweiten Schlag auslösen)
+      if (g >= th * 0.5f || quietSince < stateSince) quietSince = now;
+      if (now - stateSince >= dead && now - quietSince >= QUIET_MS) {
         state = IDLE;
       }
       break;

@@ -38,8 +38,17 @@ def test_new_hit_during_result_restarts(tmp_path):
     g.on_hit(300, 0.0)
     g.update(1.5)
     assert g.state == State.RESULT
-    assert g.on_hit(700, 2.0)
+    assert g.on_hit(700, 3.5)
     assert g.state == State.COUNTING and g.score == 700
+
+
+def test_aftershock_does_not_replace_result(tmp_path):
+    g = make_game(tmp_path)
+    g.on_hit(842, 0.0)
+    g.update(1.5)
+    assert g.state == State.RESULT
+    assert not g.on_hit(23, 1.6)       # Nachschwingen
+    assert g.score == 842
 
 
 def test_scoreboard_switch(tmp_path):

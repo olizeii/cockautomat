@@ -27,6 +27,7 @@ class Game:
         self.state = State.IDLE
         self.state_since = 0.0
         self.score = 0
+        self.last_hit = -math.inf
         self.rank: int | None = None
         self.is_record = False
         self.scoreboard_switch = False
@@ -40,6 +41,9 @@ class Game:
             return False
         if score < self.cfg.min_score:
             return False
+        if now - self.last_hit < self.cfg.min_hit_interval:
+            return False        # Nachschwingen des letzten Schlags
+        self.last_hit = now
         score = min(int(score), self.cfg.max_score)
         self.score = score
         self.is_record = score > self.highscores.best

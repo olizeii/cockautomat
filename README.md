@@ -55,7 +55,7 @@ Beim Kippschalter mit 3 Beinen: mittleres Bein an D1, ein äußeres an GND.
 Anderes ESP32-S3-Board: oben im Sketch `I2C_SDA`, `I2C_SCL` und `SWITCH_PIN` auf die **GPIO-Nummern**
 ändern (nicht die D-Beschriftung). Nicht nehmen: GPIO 0, 3, 45, 46 (Startverhalten) und 19/20 (USB).
 
-Messbereich: `RANGE_G` oben im Sketch, 100, 200 (Standard) oder 400 g. Kleiner = feinere Auflösung bei
+Messbereich: `RANGE_G` oben im Sketch, 100, 200 oder 400 g (Standard, nötig wenn die Kalibrierung „UEBERSTEUERT“ meldet). Kleiner = feinere Auflösung bei
 leichten Schlägen, größer = mehr Reserve für harte.
 
 Tipps zur Montage:
@@ -136,7 +136,7 @@ Lage des Sensors sowie alte und neue Werte):
    der nicht mindestens 1,5× so stark ist wie der stärkste leichte, zählt nicht.
 
 Meldet die App **„UEBERSTEUERT“** oder **„AM MESSLIMIT“**, kommt der Sensor bei harten Schlägen an
-seine Grenze. Dann `RANGE_G` im Sketch erhöhen (200 → 400) bzw. bei 400 g den Sensor näher an den
+seine Grenze. Dann `RANGE_G` im Sketch erhöhen bzw. bei 400 g den Sensor näher an den
 Drehpunkt setzen und neu kalibrieren.
 Nach einer Neukalibrierung sind alte Highscores nicht mehr ganz vergleichbar.
 

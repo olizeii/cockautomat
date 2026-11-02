@@ -37,6 +37,7 @@ class GameConfig:
     result_hold_time: float = 5.0   # Sekunden, die das Ergebnis stehen bleibt
     result_background: str = "frozen"  # "frozen" (gedimmtes Standbild) | "black"
     min_score: int = 1              # kleinere Werte werden ignoriert
+    min_hit_interval: float = 3.0   # Sekunden nach einem Schlag, in denen weitere ignoriert werden
     max_score: int = 999
     play_ready_overlay: bool = True # nach dem Ergebnis "Ready"-Overlay über dem Loop
     highscore_count: int = 10
