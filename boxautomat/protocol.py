@@ -8,7 +8,8 @@ from dataclasses import dataclass
 class Hit:
     score: int
     peak_mg: int | None = None
-    clipped: bool = False       # Sensor war am Anschlag (±16 g) – Wert zu niedrig
+    clipped: bool = False       # Spitze war am Anschlag des Sensors
+    wucht: int | None = None    # Fläche unter der Kurve in g*ms (Firmware ab 4.0), daraus der Score
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,7 @@ class BagPosition:
 class SensorConfig:
     """Aktive Schwelle / 999-Wert der Firmware (gespeichert oder Standard)."""
     trigger_mg: int
-    max_mg: int
+    max_wucht: int          # diese Wucht (g*ms) ergibt 999 Punkte (Firmware < 4.0: Spitze in mg)
     source: str             # "eeprom" | "default"
     range_g: int = 16       # Messbereich des Sensors (alte MPU-6050-Firmware: 16)
 
@@ -71,6 +72,7 @@ class CalHit:
     index: int
     peak_mg: int
     clipped: bool
+    wucht: int | None = None
 
 
 @dataclass(frozen=True)
@@ -93,7 +95,7 @@ class CalInfo:
 @dataclass(frozen=True)
 class CalDone:
     trigger_mg: int
-    max_mg: int
+    max_wucht: int
     clips: int
 
 
@@ -117,7 +119,8 @@ def _parse_cal(rest: str) -> CalEvent | None:
     if kind == "REST":
         return CalRest(int(a[0]))
     if kind == "HIT" and a[0] in ("LIGHT", "HARD"):
-        return CalHit(a[0], int(a[1]), int(a[2]), len(a) > 3 and a[3] == "1")
+        return CalHit(a[0], int(a[1]), int(a[2]), len(a) > 3 and a[3] == "1",
+                      int(a[4]) if len(a) > 4 else None)
     if kind == "REJECT":
         return CalReject(a[0])
     if kind == "LIVE":
@@ -157,9 +160,10 @@ def parse_line(line: str) -> Event | None:
         try:
             score = int(parts[0])
             peak = int(parts[1]) if len(parts) > 1 else None
+            wucht = int(parts[3]) if len(parts) > 3 else None
         except (IndexError, ValueError):
             return None
-        return Hit(score, peak, len(parts) > 2 and parts[2] == "1")
+        return Hit(score, peak, len(parts) > 2 and parts[2] == "1", wucht)
     if head == "CFG":
         parts = rest.split()
         try:

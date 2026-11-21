@@ -13,7 +13,7 @@ from .protocol import (BagPosition, CalAbort, CalBegin, CalDone, CalHit, CalInfo
                        CalReject, CalRest, CalState, Connection, SensorConfig)
 
 DEFAULT_RANGE_G = 200      # H3LIS331, bis die Firmware ihren Messbereich meldet (CFG)
-RESERVE = 1.5              # wie in der Firmware: 999 = härtester Schlag * 1,5
+RESERVE = 1.5              # wie in der Firmware: 999 = Wucht des härtesten Schlags * 1,5
 LIVE_SECONDS = 6.0         # so lange reicht die Kurve zurück
 DONE_SECONDS = 15.0        # so lange bleibt das Ergebnis stehen
 ABORT_SECONDS = 4.0
@@ -33,8 +33,8 @@ class Calibration:
         self.done = 0
         self.need = 1
         self.noise_mg: int | None = None
-        self.light: list[tuple[int, bool]] = []     # (Spitze mg, übersteuert)
-        self.hard: list[tuple[int, bool]] = []
+        self.light: list[CalHit] = []
+        self.hard: list[CalHit] = []
         self.reject: str | None = None
         self.reject_at = 0.0
         self.live: deque[tuple[float, int]] = deque()
@@ -81,7 +81,7 @@ class Calibration:
         elif isinstance(ev, CalRest):
             self.noise_mg = ev.noise_mg
         elif isinstance(ev, CalHit):
-            (self.light if ev.step == "LIGHT" else self.hard).append((ev.peak_mg, ev.clipped))
+            (self.light if ev.step == "LIGHT" else self.hard).append(ev)
             self.marks.append((now, ev.peak_mg, ev.step, ev.clipped))
             self.reject = None
         elif isinstance(ev, CalReject):
@@ -147,15 +147,9 @@ class Calibration:
 
     @property
     def clipped(self) -> bool:
-        """Harte Schläge waren am Anschlag -> Sensor näher ans Scharnier."""
-        return any(c for _, c in self.hard) or bool(self.result and self.result.clips)
-
-    @property
-    def near_limit(self) -> bool:
-        """999 läge über dem, was der Sensor messen kann."""
-        if not self.hard:
-            return False
-        return max(mg for mg, _ in self.hard) * RESERVE >= self.clip_mg * 0.95
+        """Spitzen harter Schläge waren am Anschlag. Für die Wucht nicht schlimm, aber ein
+        Zeichen, dass der Sensor näher ans Scharnier könnte."""
+        return any(h.clipped for h in self.hard) or bool(self.result and self.result.clips)
 
 
 def demo_events(t0: float) -> list[tuple[float, object]]:
@@ -165,10 +159,10 @@ def demo_events(t0: float) -> list[tuple[float, object]]:
         (0.0, CalBegin("command")), (0.0, CalState("REST", 0, 1)),
         (0.2, CalInfo(1000, None, (40, -1010, 120))),
     ]
-    # Zeitpunkte und Spitzen der Schläge (H3LIS331, ±200 g)
-    light = [(5.0, 4200), (6.6, 5100), (8.1, 3800)]
-    hard = [(11.0, 61000), (12.4, 6900), (13.8, 74000), (15.3, 82000)]
-    peaks = {t: mg for t, mg in light + hard}
+    # Zeitpunkte, Spitzen (mg) und Wucht (g*ms) der Schläge
+    light = [(5.0, 4200, 180), (6.6, 5100, 220), (8.1, 3800, 160)]
+    hard = [(11.0, 61000, 2600), (12.4, 6900, 300), (13.8, 74000, 3100), (15.3, 82000, 3500)]
+    peaks = {t: mg for t, mg, _ in light + hard}
     t = 0.0
     while t < 15.6:
         mg = 0 if t < 1.0 else int(abs(rng.gauss(0, 150)))
@@ -178,19 +172,19 @@ def demo_events(t0: float) -> list[tuple[float, object]]:
         out.append((t, CalLive(mg)))
         t += 0.04
     out += [(2.5, CalRest(390)), (2.5, CalState("LIGHT", 0, 3))]
-    for i, (tp, pk) in enumerate(light, 1):
-        out.append((tp + 0.12, CalHit("LIGHT", i, pk, False)))
+    for i, (tp, pk, w) in enumerate(light, 1):
+        out.append((tp + 0.12, CalHit("LIGHT", i, pk, False, w)))
         out.append((tp + 0.12, CalState("LIGHT", i, 3) if i < 3 else CalState("HARD", 0, 3)))
     n = 0
-    for tp, pk in hard:
-        if pk < 5100 * 1.5:         # zweiter Schlag ist absichtlich zu schwach
+    for tp, pk, w in hard:
+        if w < 220 * 1.5:           # zweiter Schlag ist absichtlich zu schwach
             out.append((tp + 0.12, CalReject("WEAK")))
             continue
         n += 1
-        out.append((tp + 0.12, CalHit("HARD", n, pk, False)))
+        out.append((tp + 0.12, CalHit("HARD", n, pk, False, w)))
         if n < 3:
             out.append((tp + 0.12, CalState("HARD", n, 3)))
-    trigger, top = int(3800 * 0.7), int(min(82000 * RESERVE, DEFAULT_RANGE_G * 950))
+    trigger, top = int(3800 * 0.7), int(3500 * RESERVE)
     out.append((15.6, CalDone(trigger, top, 0)))
     out.append((15.6, SensorConfig(trigger, top, "eeprom", DEFAULT_RANGE_G)))
     return sorted(((t0 + t, ev) for t, ev in out), key=lambda x: x[0])

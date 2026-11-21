@@ -123,18 +123,27 @@ Highscore). `video_fit = "cover"` füllt den Bildschirm und schneidet dafür lin
 Je weiter weg vom Drehpunkt (Scharnier / Drehwirbel), desto größer der Ausschlag. Deshalb misst der
 ESP32 Schwelle und 999-Punkte-Wert selbst und speichert sie im Flash.
 
+**Punkte aus der Wucht (Firmware 4.0):** Gewertet wird nicht die Spitze, sondern die **Wucht**: die
+Fläche unter der Beschleunigungskurve in den 120 ms nach dem Auslösen (Summe der g-Werte, Einheit g·ms).
+Sie entspricht dem Schwung, den das Pad bekommt. Die Spitze zappelt stark von Schlag zu Schlag und ist
+bei harten Schlägen oft für 1–2 ms am Messlimit abgeschnitten. Dann sahen alle harten Schläge gleich aus
+und gaben 999. Die Wucht stört das kaum. Nach dem Flashen von 4.0 startet die Kalibrierung automatisch,
+weil die alten Werte nicht mehr passen.
+
 Kalibrierung starten:
 - automatisch beim ersten Start (noch nichts gespeichert)
 - **Scoreboard-Schalter 6× schnell hin- und herkippen** (innerhalb von 4 Sekunden), genauso abbrechen
 - Taste `K` in der App oder `k` im Seriellen Monitor
 
-Ablauf (die App zeigt dabei Live-Kurve, alle Spitzenwerte, Rauschen, Abtastrate, Messbereich,
-Lage des Sensors sowie alte und neue Werte):
+Ablauf (die App zeigt dabei Live-Kurve, Spitzen und Wucht der Schläge, Rauschen, Abtastrate,
+Messbereich, Lage des Sensors sowie alte und neue Werte):
 1. **Ruhe:** Bag **unten hängen lassen** und etwa 3 Sekunden nicht berühren. Dabei werden Ruhelage,
    Rauschen und die Lage „Bag unten“ gemessen.
-2. **3× leicht klopfen:** Die Schwelle wird 70 % des schwächsten Klopfers.
-3. **3× voll draufhauen:** 999 Punkte = härtester Schlag + 50 % Reserve (höchstens 95 % des Messbereichs). Der härteste Kalibrierschlag ergibt damit etwa 720 Punkte, 999 bleibt fast unerreichbar (`CAL_RESERVE` im Sketch). Ein harter Schlag,
-   der nicht mindestens 1,5× so stark ist wie der stärkste leichte, zählt nicht.
+2. **3× leicht klopfen:** Die Auslöseschwelle wird 70 % der Spitze des schwächsten Klopfers.
+3. **3× voll draufhauen, so hart wie im echten Spiel:** 999 Punkte = Wucht des härtesten Schlags
+   + 50 % Reserve. Der härteste Kalibrierschlag ergibt damit etwa 720 Punkte, 999 bleibt fast
+   unerreichbar (`CAL_RESERVE` im Sketch). Ein harter Schlag, dessen Wucht nicht mindestens 1,5× so
+   groß ist wie die des stärksten leichten, zählt nicht.
 
 **Bag oben / unten:** Die Firmware erkennt an der Richtung der Schwerkraft, ob der Bag unten hängt
 oder oben eingerastet ist (Anzeige „BAG“ im Kalibrier-Bildschirm). Ein Schlag zählt nur, wenn der Bag
@@ -142,13 +151,13 @@ vorher unten und ruhig war. Runterlassen und Nachpendeln zählen deshalb nicht, 
 Ist der Bag oben, steht im Spiel „BAG RUNTERLASSEN“ statt „HAU DRAUF“. Nach einem Treffer werden
 weitere Schläge außerdem 3 Sekunden lang ignoriert (`min_hit_interval` in `config.toml`).
 
-Meldet die App **„UEBERSTEUERT“** oder **„AM MESSLIMIT“**, kommt der Sensor bei harten Schlägen an
-seine Grenze. Dann `RANGE_G` im Sketch erhöhen bzw. bei 400 g den Sensor näher an den
-Drehpunkt setzen und neu kalibrieren.
+Meldet die App **„SPITZE AM ANSCHLAG“**, war die Spitze eines harten Schlags kurz am Messlimit.
+Für die Wucht ist das kaum schlimm. Passiert es bei fast jedem Schlag, den Sensor näher an den
+Drehpunkt setzen (halber Abstand ≈ halbe g-Werte) und neu kalibrieren.
 Nach einer Neukalibrierung sind alte Highscores nicht mehr ganz vergleichbar.
 
 Weitere Konstanten oben im Sketch: `SCORE_EXPONENT` (< 1 gibt schwachen Schlägen mehr Punkte),
-`PEAK_WINDOW_MS` (wie lange nach dem Auslösen der Spitzenwert gesucht wird), `DEADTIME_MS`
+`PEAK_WINDOW_MS` (wie lange nach dem Auslösen die Wucht gemessen wird), `DEADTIME_MS`
 (Sperrzeit gegen Nachschwingen), `CAL_RESERVE`, `TOGGLE_COUNT` / `TOGGLE_WINDOW_MS`.
 
 ## 6. Fehlersuche
@@ -178,8 +187,8 @@ Die Tests prüfen das Protokoll, den Zustandsautomaten, die Highscores und die U
 | Richtung | Zeile | Bedeutung |
 |---|---|---|
 | Arduino → PC | `READY <version>` | gestartet |
-| | `CFG <trigger_mg> <max_mg> <eeprom\|default> <range_g>` | aktive Einstellung |
-| | `H <score> <peak_mg> <clip>` | Schlag (`clip` 1 = Sensor am Anschlag) |
+| | `CFG <trigger_mg> <max_wucht> <eeprom\|default> <range_g>` | aktive Einstellung (`max_wucht`: Wucht in g·ms für 999) |
+| | `H <score> <peak_mg> <clip> <wucht>` | Schlag (`clip` 1 = Spitze am Anschlag, Wucht in g·ms) |
 | | `CAL BEGIN/STATE/REST/HIT/REJECT/LIVE/INFO/DONE/ABORT …` | Kalibrierung (Details oben im Sketch) |
 | | `S1` / `S0` | Scoreboard-Schalter an/aus (wird alle 2 s wiederholt) |
 | | `ERR …` / `INFO …` | Meldungen (landen im Log) |

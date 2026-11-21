@@ -148,14 +148,12 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
                     if cal.visible(now):       # Schlag beendet die Ergebnisanzeige
                         cal.dismiss()
                     accepted = game.on_hit(ev.score, now)
-                    log.info("Schlag: %d Punkte (Peak %s mg)%s", ev.score, ev.peak_mg,
+                    log.info("Schlag: %d Punkte (Wucht %s, Peak %s mg%s)%s", ev.score, ev.wucht,
+                             ev.peak_mg, ", übersteuert" if ev.clipped else "",
                              "" if accepted else " – ignoriert")
-                    if ev.clipped:
-                        log.warning("Schlag übersteuert (16 g erreicht) – Sensor näher ans "
-                                    "Scharnier setzen oder neu kalibrieren")
                 elif isinstance(ev, SensorConfig):
-                    log.info("Sensor: Schwelle %.2f g, 999 Punkte bei %.2f g (%s)",
-                             ev.trigger_mg / 1000, ev.max_mg / 1000, ev.source)
+                    log.info("Sensor: Schwelle %.2f g, 999 Punkte bei Wucht %d (%s)",
+                             ev.trigger_mg / 1000, ev.max_wucht, ev.source)
                 elif isinstance(ev, DeviceReady):
                     cal.firmware = ev.version
                 elif isinstance(ev, SwitchState):

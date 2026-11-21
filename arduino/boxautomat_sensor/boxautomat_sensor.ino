@@ -18,8 +18,12 @@
  *   - Die Erdbeschleunigung (Schwerkraft) wird laufend als "Ruhelage"
  *     herausgerechnet, d.h. es zählt nur die Beschleunigung durch den Schlag.
  *   - Überschreitet die Beschleunigung die Auslöseschwelle, beginnt ein
- *     Messfenster (PEAK_WINDOW_MS). Darin wird der Spitzenwert gesucht.
- *   - Danach wird der Score berechnet, über USB gesendet und für
+ *     Messfenster (PEAK_WINDOW_MS). Darin wird die "Wucht" aufsummiert: die Fläche unter
+ *     der Beschleunigungskurve (Summe der g-Werte, 1 Wert pro ms -> Einheit g*ms).
+ *     Die Wucht entspricht dem Schwung, den das Pad bekommt. Anders als die Spitze
+ *     zappelt sie kaum, und eine kurz abgeschnittene Spitze (Sensor am Anschlag)
+ *     verfälscht sie fast nicht.
+ *   - Danach wird der Score aus der Wucht berechnet, über USB gesendet und für
  *     DEADTIME_MS keine weitere Messung gestartet (Nachschwingen ignorieren).
  *
  * Bag oben / unten:
@@ -34,15 +38,17 @@
  *   - oder: Befehl "k" vom PC
  *   Ablauf: 1. Ruhe messen (Bag hängt unten, nicht berühren)  2. 3x leicht klopfen
  *           3. 3x voll draufhauen. Zwischen den Schlägen den Bag runterlassen.
- *   Schwelle  = 70 % des schwächsten leichten Klopfers (mindestens über dem Rauschen)
- *   999 Punkte = härtester Schlag + 50 % Reserve (höchstens 95 % von RANGE_G)
+ *   Schwelle  = 70 % der Spitze des schwächsten leichten Klopfers (mindestens über dem Rauschen)
+ *   999 Punkte = Wucht des härtesten Schlags + 50 % Reserve (dieser Schlag: ~720 Punkte)
  *   Das Ergebnis wird im Flash (Preferences) gespeichert und gilt ab sofort.
  *
  * Serielles Protokoll (115200 Baud, eine Nachricht pro Zeile):
  *   ESP32 -> PC
  *     READY <version>          nach dem Start (und auf "?")
- *     CFG <trigger_mg> <max_mg> <eeprom|default> <range_g>   aktive Einstellung
- *     H <score> <peak_mg> <clip>   Schlag (score 1..999, Spitze in milli-g, clip 1 = übersteuert)
+ *     CFG <trigger_mg> <max_wucht> <eeprom|default> <range_g>   aktive Einstellung
+ *                              (max_wucht: diese Wucht in g*ms ergibt 999 Punkte)
+ *     H <score> <peak_mg> <clip> <wucht>   Schlag (score 1..999, Spitze in milli-g,
+ *                              clip 1 = Spitze übersteuert, Wucht in g*ms)
  *     S1 / S0                  Scoreboard-Schalter an / aus
  *     POS DOWN / POS UP        Bag hängt unten (spielbereit) / ist oben eingerastet
  *     R <mg>                   Rohwert-Stream (nur wenn mit "r" eingeschaltet)
@@ -51,12 +57,12 @@
  *     CAL BEGIN <first|switch|command>      Kalibrierung startet
  *     CAL STATE <REST|LIGHT|HARD> <n> <von> aktueller Schritt (auch jede Sekunde)
  *     CAL REST <noise_mg>                   Ruhemessung fertig, Rauschen
- *     CAL HIT <LIGHT|HARD> <nr> <peak_mg> <clip>   Schlag gezählt
+ *     CAL HIT <LIGHT|HARD> <nr> <peak_mg> <clip> <wucht>   Schlag gezählt
  *     CAL REJECT <MOVING|WEAK|UP|SETTLE>    nicht gezählt (Bewegung in Ruhe / harter Schlag zu
  *                                           schwach / Bag oben / Bag pendelt noch)
  *     CAL LIVE <mg>                         Live-Wert (Maximum der letzten 40 ms)
  *     CAL INFO <hz> - <x_mg> <y_mg> <z_mg>  Abtastrate, (keine Temperatur), Lage (Schwerkraft)
- *     CAL DONE <trigger_mg> <max_mg> <clips>        fertig und gespeichert
+ *     CAL DONE <trigger_mg> <max_wucht> <clips>     fertig und gespeichert
  *     CAL ABORT                             abgebrochen, alte Werte bleiben
  *   PC -> ESP32 (optional, z.B. über den Arduino Serial Monitor)
  *     ?    Version und aktuelle Einstellungen ausgeben
@@ -73,7 +79,7 @@
 // ---------------------------------------------------------------------------
 // Einstellungen – hier tunen!
 // ---------------------------------------------------------------------------
-const char*         FW_VERSION      = "3.0";
+const char*         FW_VERSION      = "4.0";
 const unsigned long BAUDRATE        = 115200;
 
 // Pins als GPIO-Nummern (XIAO ESP32-S3: D4 = 5, D5 = 6, D1 = 2)
@@ -95,9 +101,9 @@ const int           RANGE_G         = 400;   // Messbereich: 100, 200 oder 400 (
 
 // Standardwerte, solange nicht kalibriert wurde
 const float         DEFAULT_TRIGGER_G = 3.0;   // ab welcher Beschleunigung ein Schlag zählt
-const float         DEFAULT_MAX_G     = 60.0;  // dieser Spitzenwert ergibt 999 Punkte
+const float         DEFAULT_MAX_W     = 3000;  // diese Wucht (g*ms) ergibt 999 Punkte
 
-const unsigned long PEAK_WINDOW_MS  = 120;   // so lange nach dem Auslösen wird der Peak gesucht
+const unsigned long PEAK_WINDOW_MS  = 120;   // so lange nach dem Auslösen wird gemessen (Wucht)
 const unsigned long DEADTIME_MS     = 1500;  // Sperrzeit nach einem Schlag
 const unsigned long QUIET_MS        = 400;   // so lange unten, ohne Ausschlag über der Schwelle
 const float         DOWN_TOLERANCE_G = 0.5;  // so weit darf die Lage von "unten" abweichen
@@ -116,8 +122,7 @@ const unsigned long SWITCH_DEBOUNCE_MS = 40;
 
 // Kalibrierung
 const uint8_t       CAL_HITS        = 3;     // Anzahl leichte / harte Schläge
-const float         CAL_RESERVE     = 1.5;   // 999 = härtester Schlag * Reserve (dieser Schlag: ~720 Punkte)
-const float         CAL_MAX_G       = RANGE_G * 0.95f;  // mehr kann der Sensor nicht messen
+const float         CAL_RESERVE     = 1.5;   // 999 = Wucht härtester Schlag * Reserve (~720 Punkte)
 const float         CAL_MOVING_G    = 3.0;   // so viel Bewegung ist bei "Ruhe" zu viel
 const float         CAL_MIN_DETECT_G = 0.5;  // kleinste Auslöseschwelle beim Kalibrieren
 const uint8_t       TOGGLE_COUNT    = 6;     // so oft Schalter kippen ...
@@ -139,11 +144,11 @@ const int16_t RAW_CLIP        = 2040;        // 12-Bit-Wert: ab hier ist eine Ac
 const uint8_t ACC_ADDRS[]      = {0x18, 0x19};  // 0x19, wenn SDO/SA0 auf 3V3 liegt
 uint8_t       accAddr          = 0x18;          // wird in accInit() erkannt
 
-const uint8_t SETTINGS_VERSION = 3;          // 3: mit Lage "unten" -> neu kalibrieren
+const uint8_t SETTINGS_VERSION = 4;          // 4: 999 aus der Wucht -> neu kalibrieren
 Preferences prefs;
 
 float triggerG = DEFAULT_TRIGGER_G;
-float maxG     = DEFAULT_MAX_G;
+float maxW     = DEFAULT_MAX_W;               // Wucht (g*ms) für 999 Punkte
 bool  fromEeprom = false;
 float gPerDigit = 0.098;                     // wird in accInit() gesetzt
 
@@ -155,6 +160,7 @@ State state = IDLE;
 
 float baseX = 0, baseY = 0, baseZ = 0;       // Ruhelage (Schwerkraft) in g
 float peakG = 0;
+float wucht = 0;                             // Summe der g-Werte im Messfenster (g*ms)
 bool  peakClipped = false;
 unsigned long stateSince = 0;
 unsigned long armedSince = 0;                // seit wann der Bag unten und ruhig ist
@@ -193,7 +199,8 @@ float calSumX, calSumY, calSumZ;
 uint16_t calN;
 float calNoise = 0;
 float calDetectG = CAL_MIN_DETECT_G;         // Auslöseschwelle während der Kalibrierung
-float calLight[CAL_HITS], calHard[CAL_HITS];
+float calLight[CAL_HITS];                    // Spitzen der leichten Klopfer (für die Schwelle)
+float calLightW[CAL_HITS], calHardW[CAL_HITS];  // Wucht leicht / hart (für 999)
 uint8_t calCount = 0, calClips = 0;
 float liveMax = 0;
 uint16_t sampleCount = 0, sampleRate = 0;
@@ -215,13 +222,13 @@ bool loadSettings() {
   prefs.begin("boxautomat", true);
   uint8_t version = prefs.getUChar("ver", 0);
   float t = prefs.getFloat("trig", 0);
-  float m = prefs.getFloat("max", 0);
+  float m = prefs.getFloat("maxw", 0);
   float rx = prefs.getFloat("rx", 0), ry = prefs.getFloat("ry", 0), rz = prefs.getFloat("rz", 0);
   prefs.end();
   if (version != SETTINGS_VERSION) return false;
-  if (!(t > 0.05f && t < 100.0f && m > t && m <= 400.0f)) return false;
+  if (!(t > 0.05f && t < 100.0f && m > 1.0f && m < 1000000.0f)) return false;
   triggerG = t;
-  maxG = fminf(m, CAL_MAX_G);    // falls RANGE_G inzwischen kleiner ist
+  maxW = m;
   float len = sqrtf(rx * rx + ry * ry + rz * rz);
   if (len > 0.3f && len < 3.0f) { refX = rx; refY = ry; refZ = rz; hasRef = true; }
   return true;
@@ -231,7 +238,8 @@ void saveSettings() {
   prefs.begin("boxautomat", false);
   prefs.putUChar("ver", SETTINGS_VERSION);
   prefs.putFloat("trig", triggerG);
-  prefs.putFloat("max", maxG);
+  prefs.remove("max");                        // alter Spitzenwert (Version 3)
+  prefs.putFloat("maxw", maxW);
   prefs.putFloat("rx", refX);
   prefs.putFloat("ry", refY);
   prefs.putFloat("rz", refZ);
@@ -242,7 +250,7 @@ void sendConfig() {
   Serial.print(F("CFG "));
   Serial.print((long)(triggerG * 1000.0f));
   Serial.print(' ');
-  Serial.print((long)(maxG * 1000.0f));
+  Serial.print((long)maxW);
   Serial.print(fromEeprom ? F(" eeprom ") : F(" default "));
   Serial.println(RANGE_G);
 }
@@ -355,8 +363,8 @@ void updatePosition(float x, float y, float z, unsigned long now) {
 // ---------------------------------------------------------------------------
 // Score
 // ---------------------------------------------------------------------------
-int computeScore(float g) {
-  float rel = (g - triggerG) / (maxG - triggerG);
+int computeScore(float w) {
+  float rel = w / maxW;
   if (rel < 0) rel = 0;
   if (rel > 1) rel = 1;
   int score = (int)(powf(rel, SCORE_EXPONENT) * MAX_SCORE + 0.5f);
@@ -364,12 +372,13 @@ int computeScore(float g) {
   return score;
 }
 
-void sendHit(int score, float g, bool clipped) {
+void sendHit(int score, float g, bool clipped, float w) {
   Serial.print(F("H "));
   Serial.print(score);
   Serial.print(' ');
   Serial.print((long)(g * 1000.0f));
-  Serial.println(clipped ? F(" 1") : F(" 0"));
+  Serial.print(clipped ? F(" 1 ") : F(" 0 "));
+  Serial.println((long)w);
   led(true);
 }
 
@@ -424,22 +433,23 @@ void calAbort(unsigned long now) {
 }
 
 void calFinish(unsigned long now) {
-  float minLight = calLight[0], maxHard = 0;
+  float minLight = calLight[0], maxLightW = 0, maxHardW = 0;
   for (uint8_t i = 0; i < CAL_HITS; i++) {
     if (calLight[i] < minLight) minLight = calLight[i];
-    maxHard = fmaxf(maxHard, calHard[i]);
+    maxLightW = fmaxf(maxLightW, calLightW[i]);
+    maxHardW = fmaxf(maxHardW, calHardW[i]);
   }
   float floorG = fmaxf(calNoise * 1.3f, CAL_MIN_DETECT_G);
   triggerG = fmaxf(minLight * 0.7f, floorG);
-  maxG = fminf(maxHard * CAL_RESERVE, CAL_MAX_G);
-  if (maxG < triggerG * 2) maxG = triggerG * 2;
+  maxW = maxHardW * CAL_RESERVE;
+  if (maxW < maxLightW * 3) maxW = maxLightW * 3;
   fromEeprom = true;
   saveSettings();
 
   Serial.print(F("CAL DONE "));
   Serial.print((long)(triggerG * 1000.0f));
   Serial.print(' ');
-  Serial.print((long)(maxG * 1000.0f));
+  Serial.print((long)maxW);
   Serial.print(' ');
   Serial.println(calClips);
   sendConfig();
@@ -449,18 +459,19 @@ void calFinish(unsigned long now) {
 }
 
 // Ein Schlag während der Kalibrierung wurde fertig gemessen
-void calOnPeak(float peak, bool clipped, unsigned long now) {
+void calOnPeak(float peak, bool clipped, float w, unsigned long now) {
   if (calStep == CAL_HARD) {
-    float maxLight = 0;
-    for (uint8_t i = 0; i < CAL_HITS; i++) maxLight = fmaxf(maxLight, calLight[i]);
-    if (peak < maxLight * 1.5f) {
+    float maxLightW = 0;
+    for (uint8_t i = 0; i < CAL_HITS; i++) maxLightW = fmaxf(maxLightW, calLightW[i]);
+    if (w < maxLightW * 1.5f) {
       Serial.println(F("CAL REJECT WEAK"));
       return;
     }
-    calHard[calCount] = peak;
+    calHardW[calCount] = w;
     if (clipped) calClips++;
   } else {
     calLight[calCount] = peak;
+    calLightW[calCount] = w;
   }
   calCount++;
   calLastProgress = now;
@@ -470,7 +481,8 @@ void calOnPeak(float peak, bool clipped, unsigned long now) {
   Serial.print(calCount);
   Serial.print(' ');
   Serial.print((long)(peak * 1000.0f));
-  Serial.println(clipped ? F(" 1") : F(" 0"));
+  Serial.print(clipped ? F(" 1 ") : F(" 0 "));
+  Serial.println((long)w);
   led(true);
 
   if (calCount >= CAL_HITS) {
@@ -595,7 +607,7 @@ void handleCommands(unsigned long now) {
         Serial.print(F(" sensor=")); Serial.print(sensorOk ? F("ok") : F("missing"));
         Serial.print(F(" range_g=")); Serial.print(RANGE_G);
         Serial.print(F(" trigger_g=")); Serial.print(triggerG);
-        Serial.print(F(" max_g=")); Serial.print(maxG);
+        Serial.print(F(" max_wucht=")); Serial.print(maxW, 0);
         Serial.print(F(" quelle=")); Serial.print(fromEeprom ? F("gespeichert") : F("standard"));
         Serial.print(F(" base=")); Serial.print(baseX); Serial.print(',');
         Serial.print(baseY); Serial.print(','); Serial.println(baseZ);
@@ -618,8 +630,8 @@ void handleCommands(unsigned long now) {
         streamRaw = !streamRaw;
         break;
       case 't': {
-        float g = random((long)(triggerG * 10), (long)(maxG * 10)) / 10.0f;
-        sendHit(computeScore(g), g, false);
+        float w = random(1, (long)maxW);
+        sendHit(computeScore(w), triggerG, false, w);
         break;
       }
       default:
@@ -751,6 +763,7 @@ void loop() {
           state = MEASURING;
           stateSince = now;
           peakG = g;
+          wucht = g;
           peakClipped = lastClipped;
           break;
         }
@@ -768,12 +781,13 @@ void loop() {
 
     case MEASURING:
       if (g > peakG) peakG = g;
+      wucht += g;               // 1 Messwert pro ms -> Summe = Fläche in g*ms
       peakClipped |= lastClipped;
       if (now - stateSince >= PEAK_WINDOW_MS) {
         state = DEADTIME;
         stateSince = now;
-        if (calibrating) calOnPeak(peakG, peakClipped, now);
-        else sendHit(computeScore(peakG), peakG, peakClipped);
+        if (calibrating) calOnPeak(peakG, peakClipped, wucht, now);
+        else sendHit(computeScore(wucht), peakG, peakClipped, wucht);
       }
       break;
 

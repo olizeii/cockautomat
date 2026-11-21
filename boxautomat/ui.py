@@ -687,11 +687,9 @@ class Renderer:
         # Hinweise unten: Übersteuerung > abgelehnter Schlag
         msg, col = None, AMBER
         fix = ("MESSBEREICH IM SKETCH ERHOEHEN" if cal.range_g < 400
-               else "SENSOR NAEHER ANS SCHARNIER SETZEN")
-        if cal.clipped:
-            msg, col = f"UEBERSTEUERT  {fix}", RED
-        elif cal.near_limit:
-            msg = f"AM MESSLIMIT  {fix}"
+               else "BESSER NAEHER ANS SCHARNIER")
+        if cal.clipped:     # für die Wucht nicht schlimm, nur ein Hinweis
+            msg = f"SPITZE AM ANSCHLAG  ZAEHLT TROTZDEM  {fix}"
         elif cal.bag_down is False and not finished and cal.step != "REST":
             msg = "BAG IST OBEN  RUNTERLASSEN UND KURZ WARTEN"
         elif cal.reject and now - cal.reject_at < 3 and not finished:
@@ -736,14 +734,11 @@ class Renderer:
         y = gy(clip_mg)
         pygame.draw.line(screen, RED, (plot.left, y), (plot.right, y), lw)
         self._put(screen, self.text(self.f_tiny, "CLIP", RED), plot.right - u, y + 0.6 * u, "topright")
-        if cal.result:
-            for mg, label, col, anchor, x in (
-                    (cal.result.trigger_mg, "SCHWELLE", GREEN, "bottomleft", plot.left + u),
-                    (cal.result.max_mg, "999 PUNKTE", AMBER, "topright", plot.right - u)):
-                y = gy(mg)
-                self._dashed(screen, col, y, plot.left, plot.right, lw)
-                self._put(screen, self.text(self.f_tiny, label, col), x,
-                          y + (0.6 * u if anchor == "topright" else -0.6 * u), anchor)
+        if cal.result:      # 999 hängt an der Wucht, nicht an der Spitze -> keine Linie dafür
+            y = gy(cal.result.trigger_mg)
+            self._dashed(screen, GREEN, y, plot.left, plot.right, lw)
+            self._put(screen, self.text(self.f_tiny, "SCHWELLE", GREEN), plot.left + u,
+                      y - 0.6 * u, "bottomleft")
         elif cal.active and cal.detect_mg:
             y = gy(cal.detect_mg)
             self._dashed(screen, AMBER, y, plot.left, plot.right, max(1, lw // 2))
@@ -758,7 +753,7 @@ class Renderer:
             self._put(screen, self.text(self.f_small, "WARTE AUF DATEN", GREY), plot.centerx,
                       plot.centery)
 
-        for t, mg, step, clip in cal.marks:
+        for t, mg, step, clip in cal.marks:     # Beschriftung: Spitze in g
             x, y = gx(t), gy(mg)
             if x < plot.left:
                 continue
@@ -780,7 +775,10 @@ class Renderer:
                   panel.left + 1.5 * u, panel.top + 1.2 * u, "topleft")
 
         def peaks(hits):
-            return "  ".join(f"{mg / 1000:.1f}" for mg, _ in hits) if hits else "--"
+            return "  ".join(f"{h.peak_mg / 1000:.1f}" for h in hits) if hits else "--"
+
+        def wuchts(hits):
+            return "  ".join(str(h.wucht) for h in hits if h.wucht is not None) or "--"
 
         live = cal.live_mg
         live_col = (RED if live >= cal.clip_mg * 0.95 else AMBER if live >= cal.clip_mg * 0.4
@@ -788,9 +786,9 @@ class Renderer:
         info = cal.info
         old = cal.old_config or cal.config
         if cal.result:
-            trig, mx, source = cal.result.trigger_mg, cal.result.max_mg, "NEU"
+            trig, mx, source = cal.result.trigger_mg, cal.result.max_wucht, "NEU"
         elif old:
-            trig, mx = old.trigger_mg, old.max_mg
+            trig, mx = old.trigger_mg, old.max_wucht
             source = {"eeprom": "EEPROM", "default": "STANDARD"}.get(old.source, "UNBEKANNT")
         else:
             trig = mx = None
@@ -801,7 +799,8 @@ class Renderer:
             ("SPITZE 6S", _g(cal.window_peak_mg), "G", WHITE),
             ("RAUSCHEN", _g(cal.noise_mg) if cal.noise_mg is not None else "--", "G", WHITE),
             ("LEICHT", peaks(cal.light), "G", CYAN),
-            ("HART", peaks(cal.hard), "G", RED if cal.clipped else AMBER),
+            ("LEICHT WUCHT", wuchts(cal.light), "", CYAN),
+            ("HART WUCHT", wuchts(cal.hard), "", AMBER),
             ("ABTASTRATE", str(info.rate_hz) if info else "--", "HZ", WHITE),
             ("MESSBEREICH", str(cal.range_g), "G", WHITE),
             ("LAGE XYZ", " ".join(f"{v / 1000:.2f}" for v in info.base_mg) if info else "--",
@@ -809,7 +808,7 @@ class Renderer:
             ("BAG", None, {True: "UNTEN", False: "OBEN"}.get(cal.bag_down, "UNBEKANNT"),
              GREEN if cal.bag_down else AMBER if cal.bag_down is False else GREY),
             ("SCHWELLE", _g(trig) if trig is not None else "--", "G", new_col),
-            ("999 BEI", _g(mx) if mx is not None else "--", "G", new_col),
+            ("999 BEI WUCHT", str(mx) if mx is not None else "--", "", new_col),
             ("QUELLE", None, source, new_col),
             ("FIRMWARE", cal.firmware or "--", "", GREY),
             ("PORT", None, port.split("/")[-1].upper() if port else "KEINER", GREY),
