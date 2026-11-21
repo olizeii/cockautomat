@@ -13,7 +13,7 @@ from .protocol import (BagPosition, CalAbort, CalBegin, CalDone, CalHit, CalInfo
                        CalReject, CalRest, CalState, Connection, SensorConfig)
 
 DEFAULT_RANGE_G = 200      # H3LIS331, bis die Firmware ihren Messbereich meldet (CFG)
-RESERVE = 1.3              # wie in der Firmware: 999 = Mittel hart * 1,3
+RESERVE = 1.5              # wie in der Firmware: 999 = härtester Schlag * 1,5
 LIVE_SECONDS = 6.0         # so lange reicht die Kurve zurück
 DONE_SECONDS = 15.0        # so lange bleibt das Ergebnis stehen
 ABORT_SECONDS = 4.0
@@ -155,8 +155,7 @@ class Calibration:
         """999 läge über dem, was der Sensor messen kann."""
         if not self.hard:
             return False
-        mean = sum(mg for mg, _ in self.hard) / len(self.hard)
-        return mean * RESERVE >= self.clip_mg * 0.95
+        return max(mg for mg, _ in self.hard) * RESERVE >= self.clip_mg * 0.95
 
 
 def demo_events(t0: float) -> list[tuple[float, object]]:
@@ -191,8 +190,7 @@ def demo_events(t0: float) -> list[tuple[float, object]]:
         out.append((tp + 0.12, CalHit("HARD", n, pk, False)))
         if n < 3:
             out.append((tp + 0.12, CalState("HARD", n, 3)))
-    mean = (61000 + 74000 + 82000) / 3
-    trigger, top = int(3800 * 0.7), int(min(mean * RESERVE, DEFAULT_RANGE_G * 950))
+    trigger, top = int(3800 * 0.7), int(min(82000 * RESERVE, DEFAULT_RANGE_G * 950))
     out.append((15.6, CalDone(trigger, top, 0)))
     out.append((15.6, SensorConfig(trigger, top, "eeprom", DEFAULT_RANGE_G)))
     return sorted(((t0 + t, ev) for t, ev in out), key=lambda x: x[0])

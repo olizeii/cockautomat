@@ -133,7 +133,7 @@ Lage des Sensors sowie alte und neue Werte):
 1. **Ruhe:** Bag **unten hängen lassen** und etwa 3 Sekunden nicht berühren. Dabei werden Ruhelage,
    Rauschen und die Lage „Bag unten“ gemessen.
 2. **3× leicht klopfen:** Die Schwelle wird 70 % des schwächsten Klopfers.
-3. **3× voll draufhauen:** 999 Punkte = Mittelwert + 30 % Reserve (höchstens 95 % des Messbereichs). Ein harter Schlag,
+3. **3× voll draufhauen:** 999 Punkte = härtester Schlag + 50 % Reserve (höchstens 95 % des Messbereichs). Der härteste Kalibrierschlag ergibt damit etwa 720 Punkte, 999 bleibt fast unerreichbar (`CAL_RESERVE` im Sketch). Ein harter Schlag,
    der nicht mindestens 1,5× so stark ist wie der stärkste leichte, zählt nicht.
 
 **Bag oben / unten:** Die Firmware erkennt an der Richtung der Schwerkraft, ob der Bag unten hängt

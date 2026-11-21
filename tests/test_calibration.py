@@ -44,6 +44,7 @@ def test_demo_run_ends_with_saved_values():
     assert [mg for mg, _ in cal.light] == [4200, 5100, 3800]
     assert len(cal.hard) == 3                      # der zu schwache Schlag zählt nicht
     assert cal.result.trigger_mg == 2660
+    assert cal.result.max_mg == 123000             # härtester Schlag (82 g) * 1,5
     assert cal.old_config == SensorConfig(3000, 60000, "default", 200)
     assert not cal.near_limit and cal.range_g == 200
     assert cal.visible(16.0) and not cal.visible(40.0)
@@ -88,6 +89,15 @@ def test_near_limit_depends_on_sensor_range():
     cal.apply(CalBegin("command"), 0.0)
     for i, mg in enumerate((70000, 75000, 80000), 1):
         cal.apply(CalHit("HARD", i, mg, False), float(i))
-    assert cal.near_limit                          # 75 g * 1,3 > 95 g
+    assert cal.near_limit                          # 80 g * 1,5 > 95 g
     cal.apply(SensorConfig(3000, 60000, "eeprom", 400), 5.0)
     assert not cal.near_limit
+
+
+def test_near_limit_uses_hardest_hit():
+    cal = Calibration()
+    cal.apply(SensorConfig(3000, 60000, "eeprom", 100), 0.0)
+    cal.apply(CalBegin("command"), 0.0)
+    for i, mg in enumerate((10000, 10000, 70000), 1):
+        cal.apply(CalHit("HARD", i, mg, False), float(i))
+    assert cal.near_limit                          # 70 g * 1,5 > 95 g, obwohl das Mittel nur 30 g ist

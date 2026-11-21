@@ -35,7 +35,7 @@
  *   Ablauf: 1. Ruhe messen (Bag hängt unten, nicht berühren)  2. 3x leicht klopfen
  *           3. 3x voll draufhauen. Zwischen den Schlägen den Bag runterlassen.
  *   Schwelle  = 70 % des schwächsten leichten Klopfers (mindestens über dem Rauschen)
- *   999 Punkte = Mittelwert der harten Schläge + 30 % Reserve (höchstens 95 % von RANGE_G)
+ *   999 Punkte = härtester Schlag + 50 % Reserve (höchstens 95 % von RANGE_G)
  *   Das Ergebnis wird im Flash (Preferences) gespeichert und gilt ab sofort.
  *
  * Serielles Protokoll (115200 Baud, eine Nachricht pro Zeile):
@@ -116,7 +116,7 @@ const unsigned long SWITCH_DEBOUNCE_MS = 40;
 
 // Kalibrierung
 const uint8_t       CAL_HITS        = 3;     // Anzahl leichte / harte Schläge
-const float         CAL_RESERVE     = 1.3;   // 999 = Mittel der harten Schläge * Reserve
+const float         CAL_RESERVE     = 1.5;   // 999 = härtester Schlag * Reserve (dieser Schlag: ~720 Punkte)
 const float         CAL_MAX_G       = RANGE_G * 0.95f;  // mehr kann der Sensor nicht messen
 const float         CAL_MOVING_G    = 3.0;   // so viel Bewegung ist bei "Ruhe" zu viel
 const float         CAL_MIN_DETECT_G = 0.5;  // kleinste Auslöseschwelle beim Kalibrieren
@@ -424,14 +424,14 @@ void calAbort(unsigned long now) {
 }
 
 void calFinish(unsigned long now) {
-  float minLight = calLight[0], meanHard = 0;
+  float minLight = calLight[0], maxHard = 0;
   for (uint8_t i = 0; i < CAL_HITS; i++) {
     if (calLight[i] < minLight) minLight = calLight[i];
-    meanHard += calHard[i] / CAL_HITS;
+    maxHard = fmaxf(maxHard, calHard[i]);
   }
   float floorG = fmaxf(calNoise * 1.3f, CAL_MIN_DETECT_G);
   triggerG = fmaxf(minLight * 0.7f, floorG);
-  maxG = fminf(meanHard * CAL_RESERVE, CAL_MAX_G);
+  maxG = fminf(maxHard * CAL_RESERVE, CAL_MAX_G);
   if (maxG < triggerG * 2) maxG = triggerG * 2;
   fromEeprom = true;
   saveSettings();
