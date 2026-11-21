@@ -191,6 +191,15 @@ def run(cfg: Config, use_serial: bool = True, max_frames: int | None = None,
                 prev_state = game.state
 
             # ---- Zeichnen ----------------------------------------------------
+            if screen.get_size() != size:
+                # Der Fenstermanager (z. B. GNOME) passt das Vollbild manchmal erst nach dem
+                # Start an – dann alles auf die neue Größe umstellen
+                size = screen.get_size()
+                log.info("Fenstergröße geändert: %dx%d", *size)
+                video.target_size = overlay.target_size = size
+                renderer = Renderer(size, a.path(a.font_digital), a.path(a.font_arcade),
+                                    cfg.game.max_score, crt=cfg.display.crt_effect)
+
             if cal.visible(now):
                 renderer.draw_calibration(screen, cal, now, link.connected_port)
             elif game.state == State.IDLE:
